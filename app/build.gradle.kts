@@ -57,4 +57,7 @@ dependencies {
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
+    implementation("com.google.accompanist:accompanist-permissions:0.34.0")
+    implementation("com.google.android.exoplayer:exoplayer:2.18.1")
+
 }
