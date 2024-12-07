@@ -58,6 +58,6 @@ dependencies {
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
     implementation(libs.com.google.accompanist.accompanist.permissions)
-    implementation("com.google.android.exoplayer:exoplayer:2.18.5")
+    implementation("com.google.android.exoplayer:exoplayer:2.19.1")
     implementation(libs.androidx.media3.ui)
 }

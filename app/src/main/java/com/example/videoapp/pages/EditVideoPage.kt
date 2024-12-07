@@ -21,7 +21,6 @@ import com.example.videoapp.uilts.VideoPlayer
 fun EditVideoPage() {
     var state by remember { mutableStateOf<Screen>(Screen.PermissionDenied) }
     var selectedVideoUri by remember { mutableStateOf<Uri?>(null) }
-    HandlePermission { state = Screen.GetVideo }
     EditVideoSurface(state = state,
         selectedVideoUri = selectedVideoUri,
         onSelectedVideo = { selectedVideoUri = it },
@@ -48,6 +47,7 @@ fun EditVideoSurface(
         }
 
         Screen.PermissionDenied -> {
+            HandlePermission { onChangeState(Screen.GetVideo) }
             Text("no permission")
         }
     }
@@ -67,10 +67,18 @@ fun EditVideoSurface(selectedVideoUri: Uri?) {
             Text("no video")
         }
         Row {
-            Button(onClick = {}) { Text("剪辑") }
-            Button(onClick = {}) { Text("替换BGM") }
-            Button(onClick = {}) { Text("输出为GIF") }
-            Button(onClick = {}) { Text("分享") }
+            Button(onClick = {
+
+            }) { Text("剪辑") }
+            Button(onClick = {
+
+            }) { Text("替换BGM") }
+            Button(onClick = {
+
+            }) { Text("输出为GIF") }
+            Button(onClick = {
+
+            }) { Text("分享") }
         }
     }
 }

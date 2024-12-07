@@ -62,7 +62,9 @@ fun NavGrh() {
     val navControl = rememberNavController()
     NavHost(navController = navControl, startDestination = "StartPage") {
         composable("StartPage") {
-            MainPage()
+            MainPage {
+                navControl.navigate("EditPage")
+            }
         }
         composable("EditPage") {
             EditVideoPage()
