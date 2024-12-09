@@ -5,21 +5,35 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import com.example.videoapp.uilts.HandlePermission
+import com.example.videoapp.uilts.FFmpeg
 import com.example.videoapp.uilts.OnChooseVideo
 import com.example.videoapp.uilts.VideoPlayer
+import com.google.accompanist.permissions.ExperimentalPermissionsApi
+import com.google.accompanist.permissions.isGranted
+import com.google.accompanist.permissions.rememberPermissionState
 
+@OptIn(ExperimentalPermissionsApi::class)
 @Composable
 fun EditVideoPage() {
     var state by remember { mutableStateOf<Screen>(Screen.PermissionDenied) }
+    val readPermissionState =
+        rememberPermissionState(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+    LaunchedEffect(readPermissionState.status) {
+        if (!readPermissionState.status.isGranted) {
+            readPermissionState.launchPermissionRequest()
+        } else state = Screen.GetVideo
+    }
     var selectedVideoUri by remember { mutableStateOf<Uri?>(null) }
     EditVideoSurface(state = state,
         selectedVideoUri = selectedVideoUri,
@@ -47,7 +61,6 @@ fun EditVideoSurface(
         }
 
         Screen.PermissionDenied -> {
-            HandlePermission { onChangeState(Screen.GetVideo) }
             Text("no permission")
         }
     }
@@ -57,16 +70,20 @@ fun EditVideoSurface(
 @Composable
 fun EditVideoSurface(selectedVideoUri: Uri?) {
     Column(
-        modifier = Modifier.fillMaxSize()
+
     ) {
         if (selectedVideoUri != null) {
-            Box() {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(3f)
+            ) {
                 VideoPlayer(uri = selectedVideoUri)
             }
         } else {
             Text("no video")
         }
-        Row {
+        Row(modifier = Modifier.weight(1f)) {
             Button(onClick = {
 
             }) { Text("剪辑") }
@@ -79,6 +96,7 @@ fun EditVideoSurface(selectedVideoUri: Uri?) {
             Button(onClick = {
 
             }) { Text("分享") }
+            Text(FFmpeg().ffmpegVersion())
         }
     }
 }

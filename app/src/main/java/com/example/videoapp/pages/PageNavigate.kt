@@ -30,22 +30,17 @@ import androidx.navigation.compose.rememberNavController
 import com.example.videoapp.ui.theme.VideoAppTheme
 
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VideoApp() {
     var showMenu by remember { mutableStateOf(false) }
-    VideoAppSurface(showMenu) { showMenu = false }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun VideoAppSurface(showMenu: Boolean, onMenu: (Boolean) -> Unit) {
     VideoAppTheme {
         Scaffold(modifier = Modifier.fillMaxSize(), topBar = {
             TopAppBar(title = { Text(text = "这是一个剪视频APP") }, navigationIcon = {
-                IconButton(onClick = { onMenu(true) }) {
+                IconButton(onClick = { showMenu = true }) {
                     Icon(Icons.Default.Menu, contentDescription = "Menu")
                 }
-                Menu(showMenu = showMenu) { onMenu(false) }
+                Menu(showMenu = showMenu) { showMenu = false }
             })
         }) { innerPadding ->
             Surface(
@@ -56,6 +51,7 @@ fun VideoAppSurface(showMenu: Boolean, onMenu: (Boolean) -> Unit) {
         }
     }
 }
+
 
 @Composable
 fun NavGrh() {

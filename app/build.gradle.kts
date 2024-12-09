@@ -16,6 +16,12 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        externalNativeBuild {
+            cmake {
+                cppFlags += ""
+                abiFilters +="arm64-v8a"
+            }
+        }
     }
 
     buildTypes {
@@ -36,6 +42,13 @@ android {
     }
     buildFeatures {
         compose = true
+    }
+    ndkVersion = "28.0.12674087 rc2"
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 }
 
@@ -59,5 +72,7 @@ dependencies {
     debugImplementation(libs.androidx.ui.test.manifest)
     implementation(libs.com.google.accompanist.accompanist.permissions)
     implementation("com.google.android.exoplayer:exoplayer:2.19.1")
+    implementation("com.google.android.exoplayer:exoplayer-ui:2.19.1")
+
     implementation(libs.androidx.media3.ui)
 }

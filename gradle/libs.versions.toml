@@ -1,5 +1,6 @@
 [versions]
 agp = "8.7.3"
+exoplayer = "2.19.1"
 googleAccompanistPermissions = "0.34.0"
 kotlin = "2.0.0"
 coreKtx = "1.13.1"
@@ -16,6 +17,7 @@ navigationCompose = "2.8.4"
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-media3-ui = { module = "androidx.media3:media3-ui", version.ref = "media3Ui" }
 com-google-accompanist-accompanist-permissions = { module = "com.google.accompanist:accompanist-permissions", version.ref = "googleAccompanistPermissions" }
+exoplayer = { module = "com.google.android.exoplayer:exoplayer", version.ref = "exoplayer" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }

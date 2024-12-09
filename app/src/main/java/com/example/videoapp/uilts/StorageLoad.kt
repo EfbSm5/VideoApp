@@ -21,25 +21,12 @@ fun OnChooseVideo(callback: (Uri?) -> Unit) {
             callback(result.data?.data)
         }
     }
-    val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-        addCategory(Intent.CATEGORY_OPENABLE)
-        type = "video/*"
+    LaunchedEffect(Unit) {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "video/*"
+        }
+        launcher.launch(intent)
     }
-    launcher.launch(intent)
 }
 
-@Composable
-@OptIn(ExperimentalPermissionsApi::class)
-fun HandlePermission(permissionGranted: () -> Unit) {
-    val readPermissionState =
-        rememberPermissionState(android.Manifest.permission.READ_EXTERNAL_STORAGE)
-    val writePermissionState =
-        rememberPermissionState(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
-    LaunchedEffect(readPermissionState.status, writePermissionState.status) {
-        if (!writePermissionState.status.isGranted) {
-            writePermissionState.launchPermissionRequest()
-        } else if (!readPermissionState.status.isGranted) {
-            readPermissionState.launchPermissionRequest()
-        } else permissionGranted()
-    }
-}
