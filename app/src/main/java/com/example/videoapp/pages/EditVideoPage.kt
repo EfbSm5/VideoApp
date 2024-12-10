@@ -69,9 +69,7 @@ fun EditVideoSurface(
 
 @Composable
 fun EditVideoSurface(selectedVideoUri: Uri?) {
-    Column(
-
-    ) {
+    Column {
         if (selectedVideoUri != null) {
             Box(
                 modifier = Modifier
@@ -80,8 +78,6 @@ fun EditVideoSurface(selectedVideoUri: Uri?) {
             ) {
                 VideoPlayer(uri = selectedVideoUri)
             }
-        } else {
-            Text("no video")
         }
         Row(modifier = Modifier.weight(1f)) {
             Button(onClick = {
@@ -96,8 +92,9 @@ fun EditVideoSurface(selectedVideoUri: Uri?) {
             Button(onClick = {
 
             }) { Text("分享") }
-            Text(FFmpeg().ffmpegVersion())
         }
+        Text(FFmpeg().ffmpegVersion())
+
     }
 }
 

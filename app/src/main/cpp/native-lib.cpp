@@ -40,3 +40,21 @@ Java_com_example_videoapp_uilts_FFmpeg_ffmpegVersion(JNIEnv *env, jobject thiz) 
     return env->NewStringUTF(info);
 }
 }
+extern "C"
+JNIEXPORT jobject JNICALL
+Java_com_example_videoapp_uilts_FFmpeg_videoConvertToGif(JNIEnv *env, jobject thiz) {
+    // TODO: implement videoConvertToGif()
+}
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_example_videoapp_uilts_FFmpeg_ffmpegCmd(JNIEnv *env, jobject thiz, jobjectArray cmd) {
+    int argc = (*env).GetArrayLength(cmd);
+    char **argv = (char **) malloc(argc * sizeof(char *));
+    for (int i = 0; i < argc; i++) {
+        jstring javaString = (jstring) (*env).GetObjectArrayElement(cmd, i);
+        const char *nativeString = (*env).GetStringUTFChars(javaString, 0);
+        argv[i] = strdup(nativeString);
+        env->ReleaseStringUTFChars(javaString, nativeString);
+    }
+    int result=avcodec
+}
