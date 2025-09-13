@@ -1,14 +1,14 @@
-prefix=/home/EfbSm5/ffmpeg-kit/prebuilt/android-arm64/ffmpeg
+prefix=/home/EfbSm5/Downloads/ffmpeg-7.1.1/android/armv8-a
 exec_prefix=${prefix}
-libdir=/home/EfbSm5/ffmpeg-kit/prebuilt/android-arm64/ffmpeg/lib
-includedir=/home/EfbSm5/ffmpeg-kit/prebuilt/android-arm64/ffmpeg/include
+libdir=/home/EfbSm5/Downloads/ffmpeg-7.1.1/android/armv8-a/lib
+includedir=/home/EfbSm5/Downloads/ffmpeg-7.1.1/android/armv8-a/include
 
 Name: libavutil
 Description: FFmpeg utility library
-Version: 58.2.100
+Version: 59.39.100
 Requires: 
 Requires.private: 
 Conflicts:
 Libs: -L${libdir}  -lavutil 
-Libs.private: -pthread -lm -latomic
+Libs.private: -pthread -lm -latomic -landroid -lmediandk
 Cflags: -I${includedir}

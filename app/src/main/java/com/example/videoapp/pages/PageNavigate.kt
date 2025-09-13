@@ -34,7 +34,6 @@ import com.example.videoapp.ui.theme.VideoAppTheme
 @Composable
 fun VideoApp() {
     var showMenu by remember { mutableStateOf(false) }
-    VideoAppTheme {
         Scaffold(modifier = Modifier.fillMaxSize(), topBar = {
             TopAppBar(title = { Text(text = "这是一个剪视频APP") }, navigationIcon = {
                 IconButton(onClick = { showMenu = true }) {
@@ -49,7 +48,7 @@ fun VideoApp() {
                 NavGrh()
             }
         }
-    }
+
 }
 
 

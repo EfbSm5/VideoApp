@@ -1,14 +1,14 @@
-prefix=/home/EfbSm5/ffmpeg-kit/prebuilt/android-arm64/ffmpeg
+prefix=/home/EfbSm5/Downloads/ffmpeg-7.1.1/android/armv8-a
 exec_prefix=${prefix}
-libdir=/home/EfbSm5/ffmpeg-kit/prebuilt/android-arm64/ffmpeg/lib
-includedir=/home/EfbSm5/ffmpeg-kit/prebuilt/android-arm64/ffmpeg/include
+libdir=/home/EfbSm5/Downloads/ffmpeg-7.1.1/android/armv8-a/lib
+includedir=/home/EfbSm5/Downloads/ffmpeg-7.1.1/android/armv8-a/include
 
 Name: libavcodec
 Description: FFmpeg codec library
-Version: 60.3.100
+Version: 61.19.101
 Requires: 
-Requires.private: libswresample >= 4.10.100, libavutil >= 58.2.100
+Requires.private: libswresample >= 5.3.100, libavutil >= 59.39.100
 Conflicts:
 Libs: -L${libdir}  -lavcodec 
-Libs.private: -pthread -lm -latomic
+Libs.private: -pthread -lm -latomic -landroid -lmediandk -lz
 Cflags: -I${includedir}

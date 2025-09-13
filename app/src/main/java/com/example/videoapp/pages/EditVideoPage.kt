@@ -1,44 +1,42 @@
 package com.example.videoapp.pages
 
 import android.net.Uri
+import android.widget.Toast
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import com.example.videoapp.GetPermission
 import com.example.videoapp.uilts.FFmpeg
 import com.example.videoapp.uilts.OnChooseVideo
 import com.example.videoapp.uilts.VideoPlayer
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
-import com.google.accompanist.permissions.isGranted
-import com.google.accompanist.permissions.rememberPermissionState
 
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
 fun EditVideoPage() {
     var state by remember { mutableStateOf<Screen>(Screen.PermissionDenied) }
-    val readPermissionState =
-        rememberPermissionState(android.Manifest.permission.READ_EXTERNAL_STORAGE)
-    LaunchedEffect(readPermissionState.status) {
-        if (!readPermissionState.status.isGranted) {
-            readPermissionState.launchPermissionRequest()
-        } else state = Screen.GetVideo
-    }
+    val context = LocalContext.current
+    GetPermission(
+        onGranted = { state = Screen.GetVideo },
+        onDenied = { Toast.makeText(context, "no permisson", Toast.LENGTH_LONG).show() }
+    )
     var selectedVideoUri by remember { mutableStateOf<Uri?>(null) }
-    EditVideoSurface(state = state,
+    EditVideoSurface(
+        state = state,
         selectedVideoUri = selectedVideoUri,
         onSelectedVideo = { selectedVideoUri = it },
         onChangeState = { state = it })
+
 }
 
 @Composable
@@ -93,7 +91,7 @@ fun EditVideoSurface(selectedVideoUri: Uri?) {
 
             }) { Text("分享") }
         }
-        Text(FFmpeg().ffmpegVersion())
+        Text(FFmpeg.ffmpegVersion())
 
     }
 }

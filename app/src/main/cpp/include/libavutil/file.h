@@ -22,7 +22,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "version.h"
 #include "attributes.h"
 
 /**
@@ -60,56 +59,4 @@ int av_file_map(const char *filename, uint8_t **bufptr, size_t *size,
  */
 void av_file_unmap(uint8_t *bufptr, size_t size);
 
-#if FF_API_AV_FOPEN_UTF8
-/**
- * Wrapper to work around the lack of mkstemp() on mingw.
- * Also, tries to create file in /tmp first, if possible.
- * *prefix can be a character constant; *filename will be allocated internally.
- * @return file descriptor of opened file (or negative value corresponding to an
- * AVERROR code on error)
- * and opened file name in **filename.
- * @note On very old libcs it is necessary to set a secure umask before
- *       calling this, av_tempfile() can't call umask itself as it is used in
- *       libraries and could interfere with the calling application.
- * @deprecated as fd numbers cannot be passed saftely between libs on some platforms
- */
-attribute_deprecated
-int av_tempfile(const char *prefix, char **filename, int log_offset, void *log_ctx);
-#endif
-
 #endif /* AVUTIL_FILE_H */
-/*
- * Copyright (c) 2021 Taner Sener
- *
- * This file is part of FFmpegKit.
- *
- * FFmpegKit is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * FFmpegKit is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with FFmpegKit.  If not, see <http://www.gnu.org/licenses/>.
- */
-
-#ifndef AVUTIL_FILE_FFMPEG_KIT_PROTOCOLS_H
-#define AVUTIL_FILE_FFMPEG_KIT_PROTOCOLS_H
-
-typedef int (*saf_open_function)(int);
-
-typedef int (*saf_close_function)(int);
-
-saf_open_function av_get_saf_open(void);
-
-saf_close_function av_get_saf_close(void);
-
-void av_set_saf_open(saf_open_function);
-
-void av_set_saf_close(saf_close_function);
-
-#endif /* AVUTIL_FILE_FFMPEG_KIT_PROTOCOLS_H */

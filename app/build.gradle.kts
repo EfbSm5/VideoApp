@@ -43,7 +43,7 @@ android {
     buildFeatures {
         compose = true
     }
-    ndkVersion = "28.0.12674087 rc2"
+    ndkVersion = "27.2.12479018"
     externalNativeBuild {
         cmake {
             path = file("src/main/cpp/CMakeLists.txt")
