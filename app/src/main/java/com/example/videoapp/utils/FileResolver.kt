@@ -32,7 +32,6 @@ object FileResolver {
                     Environment.DIRECTORY_DOWNLOADS + "/${subDir.trimEnd('/')}/"
                 }
                 put(MediaStore.Downloads.RELATIVE_PATH, relativePath)
-                // 可选: 标记写入中
                 put(MediaStore.Downloads.IS_PENDING, 1)
             }
 
@@ -46,12 +45,9 @@ object FileResolver {
                     os.write(data)
                     os.flush()
                 }
-
-                // 更新为非 pending
                 values.clear()
                 values.put(MediaStore.Downloads.IS_PENDING, 0)
                 resolver.update(itemUri, values, null, null)
-
                 itemUri
             } catch (e: Exception) {
                 // 失败时删除已插入的占位
@@ -82,6 +78,14 @@ object FileResolver {
                 null
             }
         }
+    }
+
+    fun createOutputAbsolutePath(context: Context, mimeType: String): String {
+        val fileName = "${java.util.UUID.randomUUID()}" + mimeType
+        val dir = context.getExternalFilesDir(Environment.DIRECTORY_PICTURES)
+            ?: context.filesDir  // 兜底（极少数情况）
+        if (!dir.exists()) dir.mkdirs()
+        return File(dir, fileName).absolutePath
     }
 
     private fun getTempFile(context: Context): File {
@@ -128,7 +132,7 @@ object FileResolver {
 
     fun copyUriToCacheFile(
         context: Context, uri: Uri, subDir: String = "files", keepOriginalName: Boolean = true
-    ): File? {
+    ): String? {
         try {
             val (displayName, _) = queryDisplayNameAndSize(context, uri)
             val fileName = if (keepOriginalName && !displayName.isNullOrBlank()) {
@@ -153,7 +157,7 @@ object FileResolver {
                 }
             } ?: return null
 
-            return outFile
+            return outFile.absolutePath
         } catch (e: Exception) {
             e.printStackTrace()
         }

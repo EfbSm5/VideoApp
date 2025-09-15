@@ -12,11 +12,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -33,6 +35,7 @@ fun EditVideoPage() {
     val viewModel: VideoResolveViewModel = viewModel()
     val state by viewModel.state.collectAsState()
     val selectedVideoUri by viewModel.selectedUri.collectAsState()
+    val showLoading by viewModel.showLoading.collectAsState()
     GetPermission(
         onGranted = { viewModel.changeState(Screen.GetVideo) },
         onDenied = { showMsg("no permisson") })
@@ -40,7 +43,11 @@ fun EditVideoPage() {
         state = state,
         selectedVideoUri = selectedVideoUri,
         onSelectedVideo = { viewModel.changeUri(it) },
-        onChangeState = viewModel::changeState
+        onChangeState = viewModel::changeState,
+        showLoading = showLoading,
+        ifShowLoading = viewModel::changeShowLoading,
+        toGif = viewModel::toGif,
+        clipVideo = viewModel::clip
     )
 
 }
@@ -49,12 +56,21 @@ fun EditVideoPage() {
 fun EditVideoSurface(
     state: Screen,
     selectedVideoUri: Uri?,
+    showLoading: Boolean,
     onSelectedVideo: (Uri?) -> Unit,
-    onChangeState: (Screen) -> Unit
+    onChangeState: (Screen) -> Unit,
+    ifShowLoading: (Boolean) -> Unit,
+    toGif: () -> Unit,
+    clipVideo: () -> Unit
 ) {
     when (state) {
         Screen.EditVideo -> {
-            EditVideoSurface(selectedVideoUri = selectedVideoUri)
+            EditVideo(
+                selectedVideoUri = selectedVideoUri,
+                showLoading = showLoading,
+                toGif = toGif,
+                clipVideo = clipVideo
+            )
         }
 
         Screen.GetVideo -> {
@@ -62,13 +78,6 @@ fun EditVideoSurface(
                 onSelectedVideo(it)
                 onChangeState(Screen.EditVideo)
             }
-            Button(
-                onClick = {
-//                    FFmpeg.ffinfo()
-//                    FFmpeg.ffversion()
-                    FFmpeg.ffGif()
-                }
-            ) { }
         }
 
         Screen.PermissionDenied -> {
@@ -79,36 +88,47 @@ fun EditVideoSurface(
 
 
 @Composable
-fun EditVideoSurface(selectedVideoUri: Uri?) {
-    Column(
-        verticalArrangement = Arrangement.SpaceEvenly,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        if (selectedVideoUri != null) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(3f)
-            ) {
-                VideoPlayer(uri = selectedVideoUri, modifier = Modifier.fillMaxSize())
+fun EditVideo(
+    selectedVideoUri: Uri?,
+    showLoading: Boolean,
+    toGif: () -> Unit,
+    clipVideo: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    Box(modifier = Modifier.fillMaxSize()) {
+        if (showLoading) CircularProgressIndicator()
+        Column(
+            verticalArrangement = Arrangement.SpaceEvenly,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            if (selectedVideoUri != null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(3f)
+                ) {
+                    VideoPlayer(uri = selectedVideoUri, modifier = Modifier.fillMaxSize())
+                }
             }
+            if (selectedVideoUri != null) Row(modifier = Modifier.weight(1f)) {
+                Button(onClick = {
+                    clipVideo()
+                }) { Text("剪辑") }
+                Button(onClick = {
+
+                }) { Text("替换BGM") }
+                Button(onClick = {
+                    toGif()
+                }) { Text("输出为GIF") }
+                Button(onClick = {
+
+                }) { Text("分享") }
+            }
+            Text(FFmpeg.version())
+
         }
-        Row(modifier = Modifier.weight(1f)) {
-            Button(onClick = {
-            }) { Text("剪辑") }
-            Button(onClick = {
-//                selectedVideoUri?.let { FFmpeg.test(uri = it) }
-            }) { Text("替换BGM") }
-            Button(onClick = {
-
-            }) { Text("输出为GIF") }
-            Button(onClick = {
-
-            }) { Text("分享") }
-        }
-        Text(FFmpeg.ffmpegVersion())
-
     }
+
 }
 
 @Composable
