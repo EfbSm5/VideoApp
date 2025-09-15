@@ -14,16 +14,15 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
-
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        sourceSets["main"].jniLibs.srcDirs("src/main/jniLibs")
         externalNativeBuild {
             cmake {
                 cppFlags += ""
-                abiFilters +="arm64-v8a"
+                abiFilters += "arm64-v8a"
             }
         }
     }
-
     buildTypes {
         release {
             isMinifyEnabled = false
