@@ -33,7 +33,7 @@ class VideoResolveViewModel : ViewModel() {
         viewModelScope.launch {
             _showLoading.value = true
             val result = FFmpeg.toGif(
-                input = _selectedUri.value, startMs = 0, durationMs = 1000
+                input = _selectedUri.value, startMs = 0, durationMs = 2000, fps = 10, maxWidth = 480
             )
             _showLoading.value = false
             when (result) {

@@ -57,6 +57,17 @@ object FFmpeg {
         }
     }
 
+    fun getError(): String {
+        try {
+            val r = getLastError()
+            if (null == r) return "no error"
+            Log.d(TAG, "info: $r")
+            return r
+        } catch (e: Exception) {
+            throw e
+        }
+    }
+
     fun version(): String {
         try {
             val r = ffmpegVersion()
@@ -100,7 +111,7 @@ object FFmpeg {
             val inputPath = FileResolver.copyUriToCacheFile(ctx, input)
                 ?: return@withContext VideoResult.Failure("input-error:noResponse")
             ensureActive()
-            val outputPath = FileResolver.createOutputAbsolutePath(ctx, ".mp4")
+            val outputPath = FileResolver.createOutputAbsolutePath(ctx, ".gif")
             val resultCode = withContext(dispatcherCPU) {
                 ensureActive()
                 videoToGif(
@@ -116,7 +127,7 @@ object FFmpeg {
             if (resultCode == 0) {
                 VideoResult.Success(outputPath)
             } else {
-                VideoResult.Failure("clip-failed", code = resultCode)
+                VideoResult.Failure("gif-failed" + getError(), code = resultCode)
             }
         } catch (ce: CancellationException) {
             throw ce
@@ -162,3 +173,12 @@ object FFmpeg {
         }
     }
 }
+
+interface FFmpegProgressListener {
+    fun onProgress(currentMs: Long, totalMs: Long, percent: Float)
+
+    fun onCompleted(code: Int)
+    fun onError(code: Int, msg: String?)
+    val isCancelled: Boolean
+}
+

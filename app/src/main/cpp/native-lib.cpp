@@ -18,6 +18,7 @@
 //
 #include <jni.h>
 #include <cstdio>
+#include <cstdarg>
 #include <string>
 #include <vector>
 #include <mutex>
@@ -38,14 +39,10 @@ extern "C" {
 #include <libavutil/error.h>
 #include <libavutil/avutil.h>
 #include <libavutil/timestamp.h>
+//#include <ffmpeg.h>
 }
-#define CHECK_STEP(expr, label, stepName) \
-    do { \
-        if ((ret = (expr)) < 0) { \
-            ff_store_last_error(ret, stepName); \
-            goto label; \
-        } \
-    } while(0)
+
+
 extern "C"
 JNIEXPORT jstring JNICALL
 Java_com_example_videoapp_utils_FFmpeg_ffmpegVersion(JNIEnv *env, jobject /*thiz*/) {
@@ -54,12 +51,43 @@ Java_com_example_videoapp_utils_FFmpeg_ffmpegVersion(JNIEnv *env, jobject /*thiz
     std::snprintf(buf, sizeof(buf), "avformat_version=%u", ver);
     return env->NewStringUTF(buf);
 }
+
 extern "C" {
 #include "libavcodec/avcodec.h"
 JNIEXPORT jstring JNICALL
 Java_com_example_videoapp_utils_FFmpeg_ffmpegConfig(JNIEnv *env, jobject thiz) {
-    return env->NewStringUTF(avcodec_configuration());}}
+    return env->NewStringUTF(avcodec_configuration());
+}
+}
 
+//extern "C" JNIEXPORT void JNICALL
+//Java_com_example_videoapp_utils_FFmpeg_runffmpeg(JNIEnv *env, jobject thiz, jobjectArray commands) {
+//    if (commands == nullptr) return;
+//
+//    jsize argc = env->GetArrayLength(commands);
+//    if (argc == 0) return;
+//
+//    std::vector<const char *> rawPtrs;
+//    rawPtrs.reserve(argc);
+//    for (jsize i = 0; i < argc; ++i) {
+//        jstring jstr = (jstring) env->GetObjectArrayElement(commands, i);
+//        if (!jstr) {
+//            rawPtrs.push_back("");
+//            continue;
+//        }
+//        const char *utf = env->GetStringUTFChars(jstr, nullptr);
+//        rawPtrs.push_back(utf);
+//        env->DeleteLocalRef(jstr);
+//    }
+//    std::vector<char *> argv;
+//    argv.reserve(argc + 1);
+//    for (auto p: rawPtrs) {
+//        argv.push_back(const_cast<char *>(p));
+//    }
+//    argv.push_back(nullptr);
+//
+//    ffmpeg_exec((int) argc, argv.data());
+//}
 
 
 extern "C" JNIEXPORT jboolean JNICALL
@@ -80,6 +108,67 @@ Java_com_example_videoapp_utils_FFmpeg_initLogger(JNIEnv *env, jobject thiz) {
     ff_init_logger();
 }
 
+static thread_local char t_lastError[512];
+static std::mutex g_errMutex;
+
+static void android_log_callback(void *ptr, int level, const char *fmt, va_list vl) {
+    if (level > av_log_get_level()) return;
+    char line[1024];
+    vsnprintf(line, sizeof(line), fmt, vl);
+
+#ifdef __ANDROID__
+    int prio = ANDROID_LOG_DEBUG;
+    switch (level) {
+        case AV_LOG_PANIC:
+        case AV_LOG_FATAL:
+            prio = ANDROID_LOG_FATAL;
+            break;
+        case AV_LOG_ERROR:
+            prio = ANDROID_LOG_ERROR;
+            break;
+        case AV_LOG_WARNING:
+            prio = ANDROID_LOG_WARN;
+            break;
+        case AV_LOG_INFO:
+            prio = ANDROID_LOG_INFO;
+            break;
+        default:
+            prio = ANDROID_LOG_DEBUG;
+            break;
+    }
+    __android_log_print(prio, FF_LOG_TAG, "%s", line);
+#else
+    fprintf(stderr, "[%d] %s\n", level, line);
+#endif
+}
+
+void ff_init_logger(int level) {
+    av_log_set_level(level);
+    av_log_set_callback(android_log_callback);
+}
+
+// 增加无参版本，便于 Java 直接调用
+void ff_init_logger() {
+    ff_init_logger(AV_LOG_INFO);
+}
+
+void ff_store_last_error(int err, const char *where) {
+    char errbuf[AV_ERROR_MAX_STRING_SIZE] = {0};
+    av_strerror(err, errbuf, sizeof(errbuf));
+    {
+        std::lock_guard<std::mutex> lk(g_errMutex);
+        snprintf(t_lastError, sizeof(t_lastError), "%s failed: (%d) %s", where, err, errbuf);
+    }
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_ERROR, FF_LOG_TAG, "ERROR %s", t_lastError);
+#endif
+}
+
+const char *ff_get_last_error() {
+    std::lock_guard<std::mutex> lk(g_errMutex);
+    return t_lastError[0] ? t_lastError : "";
+}
+
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  "GIF", __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "GIF", __VA_ARGS__)
 
@@ -88,11 +177,14 @@ struct GifResources {
     AVFormatContext *outFmtCtx = nullptr;
     AVCodecContext *decCtx = nullptr;
     AVCodecContext *gifEncCtx = nullptr;
+
     AVStream *inVideoStream = nullptr;
     AVStream *outVideoStream = nullptr;
+
     AVPacket *pkt = nullptr;
     AVFrame *decFrame = nullptr;
     AVFrame *filtFrame = nullptr;
+
     AVFilterGraph *filterGraph = nullptr;
     AVFilterContext *buffersrcCtx = nullptr;
     AVFilterContext *buffersinkCtx = nullptr;
@@ -114,13 +206,7 @@ struct GifResources {
     }
 };
 
-static inline void logErr(int ret, const char *ctx) {
-    char buf[256];
-    av_strerror(ret, buf, sizeof(buf));
-    LOGE("%s error: %s (%d)", ctx, buf, ret);
-}
 
-// RAII 包装 jstring -> const char*
 struct JStr {
     JNIEnv *env;
     jstring js;
@@ -137,19 +223,19 @@ struct JStr {
 
 extern "C"
 JNIEXPORT jint JNICALL
-Java_com_example_videoapp_utils_FFmpeg_videoToGif(JNIEnv *env, jobject thiz,
-                                                  jstring jInput,
-                                                  jstring jOutput,
-                                                  jint jMaxWidth,
-                                                  jint jFps,
-                                                  jlong jStartMs,
-                                                  jlong jDurationMs,
-                                                  jint /*qualityPreset*/) {
-    JStr inPath(env, jInput);
-    JStr outPath(env, jOutput);
+Java_com_example_videoapp_utils_FFmpeg_videoToGif(
+        JNIEnv *env,
+        jobject thiz,
+        jstring jInput,
+        jstring jOutput,
+        jint jMaxWidth,
+        jint jFps,
+        jlong jStartMs,
+        jlong jDurationMs,
+        jint /*qualityPreset*/) {
 
+    JStr inPath(env, jInput), outPath(env, jOutput);
     GifResources R;
-    int ret = 0;
 
     int fps = jFps > 0 ? jFps : 10;
     int maxWidth = jMaxWidth > 0 ? jMaxWidth : 480;
@@ -158,359 +244,337 @@ Java_com_example_videoapp_utils_FFmpeg_videoToGif(JNIEnv *env, jobject thiz,
     int64_t startPts = AV_NOPTS_VALUE;
     int64_t endPts = AV_NOPTS_VALUE;
 
-    LOGI("videoToGif in=%s out=%s fps=%d maxW=%d", inPath.cstr, outPath.cstr, fps, maxWidth);
+    av_log(nullptr, AV_LOG_INFO, "videoToGif in=%s out=%s fps=%d maxW=%d",
+           inPath.cstr, outPath.cstr, fps, maxWidth);
 
-    // 输入
-    ret = avformat_open_input(&R.inFmtCtx, inPath.cstr, nullptr, nullptr);
+    auto run = [&]() -> int {
+        int ret = 0;
+        // 宏：失败记录并返回
+#undef FAIL
+#undef CHECK
+#define FAIL(code, where) do { ret = (code); ff_store_last_error(ret, where); return ret; } while(0)
+#define CHECK(EXPR, where) do { if ((ret = (EXPR)) < 0) { ff_store_last_error(ret, where); return ret; } } while(0)
 
-    if (ret < 0) {
-        logErr(ret, "open_input");
-        return ret;
-    }
-    ret = avformat_find_stream_info(R.inFmtCtx, nullptr);
-    if (ret < 0) {
-        logErr(ret, "find_stream_info");
-        return ret;
-    }
+        // 统计
+        int64_t stat_readPkts = 0;
+        int64_t stat_videoPkts = 0;
+        int64_t stat_decFrames = 0;
+        int64_t stat_filtFrames = 0;
+        int64_t stat_encPkts = 0;
+        int64_t stat_writtenPkts = 0;
 
-    // 找视频流
-    {
-        int idx = -1;
-        for (unsigned i = 0; i < R.inFmtCtx->nb_streams; ++i) {
-            if (R.inFmtCtx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
-                idx = (int) i;
-                break;
+        // 打开输入
+        CHECK(avformat_open_input(&R.inFmtCtx, inPath.cstr, nullptr, nullptr), "open_input");
+        CHECK(avformat_find_stream_info(R.inFmtCtx, nullptr), "find_stream_info");
+
+        // 查找视频流
+        {
+            int vIndex = -1;
+            for (unsigned i = 0; i < R.inFmtCtx->nb_streams; ++i) {
+                if (R.inFmtCtx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+                    vIndex = (int) i;
+                    break;
+                }
             }
-        }
-        if (idx < 0) {
-            ret = AVERROR_STREAM_NOT_FOUND;
-            logErr(ret, "video_stream");
-            return ret;
-        }
-        R.inVideoStream = R.inFmtCtx->streams[idx];
-    }
-
-    // 解码器
-    {
-        const AVCodec *dec = avcodec_find_decoder(R.inVideoStream->codecpar->codec_id);
-        if (!dec) {
-            ret = AVERROR_DECODER_NOT_FOUND;
-            logErr(ret, "find_decoder");
-            return ret;
-        }
-        R.decCtx = avcodec_alloc_context3(dec);
-        if (!R.decCtx) {
-            ret = AVERROR(ENOMEM);
-            logErr(ret, "alloc_dec_ctx");
-            return ret;
-        }
-        ret = avcodec_parameters_to_context(R.decCtx, R.inVideoStream->codecpar);
-        if (ret < 0) {
-            logErr(ret, "par_to_ctx");
-            return ret;
-        }
-        R.decCtx->thread_count = 2;
-        ret = avcodec_open2(R.decCtx, dec, nullptr);
-        if (ret < 0) {
-            logErr(ret, "open_decoder");
-            return ret;
-        }
-    }
-
-    AVRational inTb = R.inVideoStream->time_base;
-    if (startMs > 0) startPts = (int64_t) ((startMs / 1000.0) / av_q2d(inTb));
-    if (durationMs > 0) endPts = (int64_t) (((startMs + durationMs) / 1000.0) / av_q2d(inTb));
-
-    if (startPts != AV_NOPTS_VALUE) {
-        int sret = av_seek_frame(R.inFmtCtx, R.inVideoStream->index, startPts,
-                                 AVSEEK_FLAG_BACKWARD);
-        if (sret >= 0) avcodec_flush_buffers(R.decCtx);
-    }
-
-    // 输出与编码器
-    ret = avformat_alloc_output_context2(&R.outFmtCtx, nullptr, "gif", outPath.cstr);
-    if (ret < 0 || !R.outFmtCtx) {
-        logErr(ret, "alloc_output_context");
-        return ret < 0 ? ret : AVERROR_UNKNOWN;
-    }
-
-    const AVCodec *gifCodec = avcodec_find_encoder(AV_CODEC_ID_GIF);
-    if (!gifCodec) {
-        ret = AVERROR_ENCODER_NOT_FOUND;
-        logErr(ret, "find_gif_encoder");
-        return ret;
-    }
-    R.gifEncCtx = avcodec_alloc_context3(gifCodec);
-    if (!R.gifEncCtx) {
-        ret = AVERROR(ENOMEM);
-        logErr(ret, "alloc_gif_ctx");
-        return ret;
-    }
-
-    if (R.decCtx->width <= 0 || R.decCtx->height <= 0) {
-        ret = AVERROR_INVALIDDATA;
-        logErr(ret, "invalid_input_size");
-        return ret;
-    }
-
-    double ratio = R.decCtx->height * 1.0 / R.decCtx->width;
-    int outW = maxWidth;
-    int outH = (int) (outW * ratio);
-    if (outH % 2) outH++;
-
-    R.gifEncCtx->pix_fmt = AV_PIX_FMT_PAL8;
-    R.gifEncCtx->time_base = (AVRational) {1, fps};
-    R.gifEncCtx->width = outW;
-    R.gifEncCtx->height = outH;
-
-    R.outVideoStream = avformat_new_stream(R.outFmtCtx, gifCodec);
-    if (!R.outVideoStream) {
-        ret = AVERROR(ENOMEM);
-        logErr(ret, "new_stream");
-        return ret;
-    }
-
-    ret = avcodec_open2(R.gifEncCtx, gifCodec, nullptr);
-    if (ret < 0) {
-        logErr(ret, "open_gif_encoder");
-        return ret;
-    }
-
-    ret = avcodec_parameters_from_context(R.outVideoStream->codecpar, R.gifEncCtx);
-    if (ret < 0) {
-        logErr(ret, "ctx_to_par");
-        return ret;
-    }
-    R.outVideoStream->time_base = R.gifEncCtx->time_base;
-
-    if (!(R.outFmtCtx->oformat->flags & AVFMT_NOFILE)) {
-        ret = avio_open(&R.outFmtCtx->pb, outPath.cstr, AVIO_FLAG_WRITE);
-        if (ret < 0) {
-            logErr(ret, "avio_open");
-            return ret;
-        }
-    }
-    ret = avformat_write_header(R.outFmtCtx, nullptr);
-    if (ret < 0) {
-        logErr(ret, "write_header");
-        return ret;
-    }
-
-    // 帧/包
-    R.pkt = av_packet_alloc();
-    R.decFrame = av_frame_alloc();
-    R.filtFrame = av_frame_alloc();
-    if (!R.pkt || !R.decFrame || !R.filtFrame) {
-        ret = AVERROR(ENOMEM);
-        logErr(ret, "alloc_frames");
-        return ret;
-    }
-
-    // 滤镜
-    R.filterGraph = avfilter_graph_alloc();
-    if (!R.filterGraph) {
-        ret = AVERROR(ENOMEM);
-        logErr(ret, "alloc_graph");
-        return ret;
-    }
-
-    {
-        const AVFilter *buffersrc = avfilter_get_by_name("buffer");
-        const AVFilter *buffersink = avfilter_get_by_name("buffersink");
-        if (!buffersrc || !buffersink) {
-            ret = AVERROR_FILTER_NOT_FOUND;
-            logErr(ret, "find_filters");
-            return ret;
+            if (vIndex < 0) FAIL(AVERROR_STREAM_NOT_FOUND, "video_stream");
+            R.inVideoStream = R.inFmtCtx->streams[vIndex];
+            av_log(nullptr, AV_LOG_INFO, "videoToGif: video_stream=%d tb=%d/%d", vIndex,
+                   R.inVideoStream->time_base.num, R.inVideoStream->time_base.den);
         }
 
-        char args[256];
-        snprintf(args, sizeof(args),
-                 "video_size=%dx%d:pix_fmt=%d:time_base=%d/%d:pixel_aspect=%d/%d",
-                 R.decCtx->width, R.decCtx->height, R.decCtx->pix_fmt,
-                 inTb.num, inTb.den,
-                 R.decCtx->sample_aspect_ratio.num, R.decCtx->sample_aspect_ratio.den);
-
-        ret = avfilter_graph_create_filter(&R.buffersrcCtx, buffersrc, "in", args, nullptr,
-                                           R.filterGraph);
-        if (ret < 0) {
-            logErr(ret, "create_buffersrc");
-            return ret;
-        }
-        ret = avfilter_graph_create_filter(&R.buffersinkCtx, buffersink, "out", nullptr, nullptr,
-                                           R.filterGraph);
-        if (ret < 0) {
-            logErr(ret, "create_buffersink");
-            return ret;
+        // 创建解码器上下文
+        {
+            const AVCodec *dec = avcodec_find_decoder(R.inVideoStream->codecpar->codec_id);
+            if (!dec) FAIL(AVERROR_DECODER_NOT_FOUND, "find_decoder");
+            R.decCtx = avcodec_alloc_context3(dec);
+            if (!R.decCtx) FAIL(AVERROR(ENOMEM), "alloc_dec_ctx");
+            CHECK(avcodec_parameters_to_context(R.decCtx, R.inVideoStream->codecpar), "par_to_ctx");
+            R.decCtx->thread_count = 2;
+            CHECK(avcodec_open2(R.decCtx, dec, nullptr), "open_decoder");
         }
 
-        enum AVPixelFormat pixFmts[] = {AV_PIX_FMT_PAL8, AV_PIX_FMT_NONE};
-        ret = av_opt_set_int_list(R.buffersinkCtx, "pix_fmts", pixFmts, AV_PIX_FMT_NONE,
-                                  AV_OPT_SEARCH_CHILDREN);
-        if (ret < 0) {
-            logErr(ret, "set_pix_fmts");
-            return ret;
+        AVRational inTb = R.inVideoStream->time_base;
+        if (startMs > 0) {
+            startPts = av_rescale_q(startMs, AVRational{1, 1000}, inTb);
+        }
+        if (durationMs > 0) {
+            endPts = av_rescale_q(startMs + durationMs, AVRational{1, 1000}, inTb);
+        }
+        av_log(nullptr, AV_LOG_INFO,
+               "videoToGif: cut range startMs=%lld durationMs=%lld startPts=%lld endPts=%lld tb=%d/%d",
+               (long long) startMs, (long long) durationMs, (long long) startPts,
+               (long long) endPts, inTb.num, inTb.den);
+
+        if (startPts != AV_NOPTS_VALUE) {
+            int sret = av_seek_frame(R.inFmtCtx, R.inVideoStream->index, startPts,
+                                     AVSEEK_FLAG_BACKWARD);
+            av_log(nullptr, AV_LOG_INFO, "videoToGif: seek to %lld ret=%d", (long long) startPts,
+                   sret);
+            if (sret >= 0) avcodec_flush_buffers(R.decCtx);
         }
 
-        char filterDesc[512];
-        snprintf(filterDesc, sizeof(filterDesc),
-                 "[0:v]fps=%d,scale=%d:-1:flags=lanczos,split[a][b];"
-                 "[a]palettegen=stats_mode=full[p];"
-                 "[b][p]paletteuse=dither=bayer:bayer_scale=5",
-                 fps, maxWidth);
-        LOGI("FilterGraph: %s", filterDesc);
-
-        AVFilterInOut *inputs = avfilter_inout_alloc();
-        AVFilterInOut *outputs = avfilter_inout_alloc();
-        if (!inputs || !outputs) {
-            if (inputs) avfilter_inout_free(&inputs);
-            if (outputs) avfilter_inout_free(&outputs);
-            ret = AVERROR(ENOMEM);
-            logErr(ret, "alloc_inout");
-            return ret;
-        }
-        outputs->name = av_strdup("in");
-        outputs->filter_ctx = R.buffersrcCtx;
-        outputs->pad_idx = 0;
-        outputs->next = nullptr;
-
-        inputs->name = av_strdup("out");
-        inputs->filter_ctx = R.buffersinkCtx;
-        inputs->pad_idx = 0;
-        inputs->next = nullptr;
-
-        ret = avfilter_graph_parse_ptr(R.filterGraph, filterDesc, &inputs, &outputs, nullptr);
-        if (ret < 0) {
-            logErr(ret, "graph_parse");
-            avfilter_inout_free(&inputs);
-            avfilter_inout_free(&outputs);
-            return ret;
-        }
-        ret = avfilter_graph_config(R.filterGraph, nullptr);
-        if (ret < 0) {
-            logErr(ret, "graph_config");
-            avfilter_inout_free(&inputs);
-            avfilter_inout_free(&outputs);
-            return ret;
-        }
-        avfilter_inout_free(&inputs);
-        avfilter_inout_free(&outputs);
-    }
-
-    // 主循环
-    int64_t gifFrameCount = 0;
-    while ((ret = av_read_frame(R.inFmtCtx, R.pkt)) >= 0) {
-        if (R.pkt->stream_index != R.inVideoStream->index) {
-            av_packet_unref(R.pkt);
-            continue;
-        }
-        if (startPts != AV_NOPTS_VALUE && R.pkt->pts != AV_NOPTS_VALUE && R.pkt->pts < startPts) {
-            av_packet_unref(R.pkt);
-            continue;
-        }
-        if (endPts != AV_NOPTS_VALUE && R.pkt->pts != AV_NOPTS_VALUE && R.pkt->pts > endPts) {
-            av_packet_unref(R.pkt);
-            break;
+        // 输出上下文
+        {
+            CHECK(avformat_alloc_output_context2(&R.outFmtCtx, nullptr, "gif", outPath.cstr),
+                  "alloc_output_context2");
+            if (!R.outFmtCtx) FAIL(AVERROR_UNKNOWN, "alloc_output_ctx_null");
         }
 
-        ret = avcodec_send_packet(R.decCtx, R.pkt);
-        av_packet_unref(R.pkt);
-        if (ret < 0 && ret != AVERROR(EAGAIN)) {
-            logErr(ret, "send_packet");
-            return ret;
-        }
+        // GIF 编码器
+        const AVCodec *gifCodec = avcodec_find_encoder(AV_CODEC_ID_GIF);
+        if (!gifCodec) FAIL(AVERROR_ENCODER_NOT_FOUND, "find_gif_encoder");
 
-        while ((ret = avcodec_receive_frame(R.decCtx, R.decFrame)) >= 0) {
-            R.decFrame->pts = R.decFrame->best_effort_timestamp;
-            ret = av_buffersrc_add_frame_flags(R.buffersrcCtx, R.decFrame,
-                                               AV_BUFFERSRC_FLAG_KEEP_REF);
-            av_frame_unref(R.decFrame);
-            if (ret < 0) {
-                logErr(ret, "buffersrc_add_frame");
-                return ret;
+        R.gifEncCtx = avcodec_alloc_context3(gifCodec);
+        if (!R.gifEncCtx) FAIL(AVERROR(ENOMEM), "alloc_gif_ctx");
+
+        if (R.decCtx->width <= 0 || R.decCtx->height <= 0)
+            FAIL(AVERROR_INVALIDDATA, "invalid_input_size");
+
+        double aspect = (double) R.decCtx->height / (double) R.decCtx->width;
+        int outW = maxWidth;
+        int outH = (int) (outW * aspect);
+        if (outH % 2) outH++;
+        av_log(nullptr, AV_LOG_INFO, "videoToGif: enc size %dx%d fps=%d", outW, outH, fps);
+
+        R.gifEncCtx->pix_fmt = AV_PIX_FMT_PAL8;
+        R.gifEncCtx->time_base = (AVRational) {1, fps};
+        R.gifEncCtx->width = outW;
+        R.gifEncCtx->height = outH;
+
+        R.outVideoStream = avformat_new_stream(R.outFmtCtx, gifCodec);
+        if (!R.outVideoStream) FAIL(AVERROR(ENOMEM), "new_stream");
+
+        CHECK(avcodec_open2(R.gifEncCtx, gifCodec, nullptr), "open_gif_encoder");
+        CHECK(avcodec_parameters_from_context(R.outVideoStream->codecpar, R.gifEncCtx),
+              "ctx_to_par");
+        R.outVideoStream->time_base = R.gifEncCtx->time_base;
+
+        if (!(R.outFmtCtx->oformat->flags & AVFMT_NOFILE)) {
+            CHECK(avio_open(&R.outFmtCtx->pb, outPath.cstr, AVIO_FLAG_WRITE), "avio_open");
+        }
+        CHECK(avformat_write_header(R.outFmtCtx, nullptr), "write_header");
+
+        // 分配帧/包
+        R.pkt = av_packet_alloc();
+        R.decFrame = av_frame_alloc();
+        R.filtFrame = av_frame_alloc();
+        if (!R.pkt || !R.decFrame || !R.filtFrame)
+            FAIL(AVERROR(ENOMEM), "alloc_frames");
+
+        // 过滤器图
+        R.filterGraph = avfilter_graph_alloc();
+        if (!R.filterGraph) FAIL(AVERROR(ENOMEM), "alloc_graph");
+
+        {
+            const AVFilter *buffersrc = avfilter_get_by_name("buffer");
+            const AVFilter *buffersink = avfilter_get_by_name("buffersink");
+            if (!buffersrc || !buffersink) FAIL(AVERROR_FILTER_NOT_FOUND, "find_filters");
+
+            char args[256];
+            snprintf(args, sizeof(args),
+                     "video_size=%dx%d:pix_fmt=%d:time_base=%d/%d:pixel_aspect=%d/%d",
+                     R.decCtx->width, R.decCtx->height, R.decCtx->pix_fmt,
+                     inTb.num, inTb.den,
+                     R.decCtx->sample_aspect_ratio.num, R.decCtx->sample_aspect_ratio.den);
+
+            CHECK(avfilter_graph_create_filter(&R.buffersrcCtx, buffersrc, "in", args, nullptr,
+                                               R.filterGraph),
+                  "create_buffersrc");
+            CHECK(avfilter_graph_create_filter(&R.buffersinkCtx, buffersink, "out", nullptr,
+                                               nullptr,
+                                               R.filterGraph),
+                  "create_buffersink");
+
+            enum AVPixelFormat pixFmts[] = {AV_PIX_FMT_PAL8, AV_PIX_FMT_NONE};
+            CHECK(av_opt_set_int_list(R.buffersinkCtx, "pix_fmts", pixFmts, AV_PIX_FMT_NONE,
+                                      AV_OPT_SEARCH_CHILDREN), "set_pix_fmts");
+
+            // 滤镜链：抽帧→缩放→调色板→应用调色板
+            char filterDesc[512];
+            snprintf(filterDesc, sizeof(filterDesc),
+                     "[in]fps=%d,scale=%d:-1:flags=lanczos,split[a][b];"
+                     "[a]palettegen=stats_mode=full[p];"
+                     "[b][p]paletteuse=dither=bayer:bayer_scale=5[out]",
+                     fps, maxWidth);
+            av_log(nullptr, AV_LOG_INFO, "FilterGraph: %s", filterDesc);
+
+            AVFilterInOut *inputs = avfilter_inout_alloc();
+            AVFilterInOut *outputs = avfilter_inout_alloc();
+            if (!inputs || !outputs) {
+                if (inputs) avfilter_inout_free(&inputs);
+                if (outputs) avfilter_inout_free(&outputs);
+                FAIL(AVERROR(ENOMEM), "alloc_inout");
             }
 
-            // drain filter
-            while ((ret = av_buffersink_get_frame(R.buffersinkCtx, R.filtFrame)) >= 0) {
-                gifFrameCount++;
-                R.filtFrame->pts = gifFrameCount - 1;
+            outputs->name = av_strdup("in");
+            outputs->filter_ctx = R.buffersrcCtx;
+            outputs->pad_idx = 0;
+            outputs->next = nullptr;
 
-                ret = avcodec_send_frame(R.gifEncCtx, R.filtFrame);
-                av_frame_unref(R.filtFrame);
-                if (ret < 0 && ret != AVERROR(EAGAIN)) {
-                    logErr(ret, "gif_send_frame");
-                    return ret;
+            inputs->name = av_strdup("out");
+            inputs->filter_ctx = R.buffersinkCtx;
+            inputs->pad_idx = 0;
+            inputs->next = nullptr;
+
+            int pret = avfilter_graph_parse_ptr(R.filterGraph, filterDesc, &inputs, &outputs,
+                                                nullptr);
+            avfilter_inout_free(&inputs);
+            avfilter_inout_free(&outputs);
+            if (pret < 0) FAIL(pret, "graph_parse");
+            CHECK(avfilter_graph_config(R.filterGraph, nullptr), "graph_config");
+        }
+
+        // 主处理循环
+        {
+            int ret2 = 0;
+            int64_t gifFrameCount = 0;
+            while ((ret2 = av_read_frame(R.inFmtCtx, R.pkt)) >= 0) {
+                stat_readPkts++;
+                if (R.pkt->stream_index != R.inVideoStream->index) {
+                    av_packet_unref(R.pkt);
+                    continue;
+                }
+                stat_videoPkts++;
+                if (startPts != AV_NOPTS_VALUE && R.pkt->pts != AV_NOPTS_VALUE &&
+                    R.pkt->pts < startPts) {
+                    av_packet_unref(R.pkt);
+                    continue;
+                }
+                if (endPts != AV_NOPTS_VALUE && R.pkt->pts != AV_NOPTS_VALUE &&
+                    R.pkt->pts > endPts) {
+                    av_packet_unref(R.pkt);
+                    break;
                 }
 
-                AVPacket outPkt;
-                av_init_packet(&outPkt);
-                while ((ret = avcodec_receive_packet(R.gifEncCtx, &outPkt)) >= 0) {
-                    av_packet_rescale_ts(&outPkt, R.gifEncCtx->time_base,
-                                         R.outVideoStream->time_base);
-                    outPkt.stream_index = R.outVideoStream->index;
-                    ret = av_interleaved_write_frame(R.outFmtCtx, &outPkt);
-                    av_packet_unref(&outPkt);
-                    if (ret < 0) {
-                        logErr(ret, "write_frame");
-                        return ret;
+                ret2 = avcodec_send_packet(R.decCtx, R.pkt);
+                av_packet_unref(R.pkt);
+                if (ret2 < 0 && ret2 != AVERROR(EAGAIN)) FAIL(ret2, "send_packet");
+
+                while ((ret2 = avcodec_receive_frame(R.decCtx, R.decFrame)) >= 0) {
+                    stat_decFrames++;
+                    R.decFrame->pts = R.decFrame->best_effort_timestamp;
+                    CHECK(av_buffersrc_add_frame_flags(R.buffersrcCtx, R.decFrame,
+                                                       AV_BUFFERSRC_FLAG_KEEP_REF),
+                          "buffersrc_add_frame");
+                    av_frame_unref(R.decFrame);
+
+                    while ((ret2 = av_buffersink_get_frame(R.buffersinkCtx, R.filtFrame)) >= 0) {
+                        stat_filtFrames++;
+                        gifFrameCount++;
+                        R.filtFrame->pts = gifFrameCount - 1;
+                        ret2 = avcodec_send_frame(R.gifEncCtx, R.filtFrame);
+                        av_frame_unref(R.filtFrame);
+                        if (ret2 < 0 && ret2 != AVERROR(EAGAIN)) FAIL(ret2, "gif_send_frame");
+
+                        while ((ret2 = avcodec_receive_packet(R.gifEncCtx, R.pkt)) >= 0) {
+                            stat_encPkts++;
+                            av_packet_rescale_ts(R.pkt, R.gifEncCtx->time_base,
+                                                 R.outVideoStream->time_base);
+                            R.pkt->stream_index = R.outVideoStream->index;
+                            int wret = av_interleaved_write_frame(R.outFmtCtx, R.pkt);
+                            if (wret < 0) {
+                                ff_store_last_error(wret, "write_frame");
+                                av_packet_unref(R.pkt);
+                                return wret;
+                            }
+                            stat_writtenPkts++;
+                            av_packet_unref(R.pkt);
+                        }
+                        if (ret2 == AVERROR(EAGAIN) || ret2 == AVERROR_EOF) ret2 = 0;
+                    }
+                    if (ret2 == AVERROR(EAGAIN) || ret2 == AVERROR_EOF) ret2 = 0;
+                }
+                if (ret2 == AVERROR(EAGAIN) || ret2 == AVERROR_EOF) ret2 = 0;
+            }
+            if (ret2 != AVERROR_EOF && ret2 != 0) FAIL(ret2, "read_frame_loop");
+
+            // flush 解码器
+            ret2 = avcodec_send_packet(R.decCtx, nullptr);
+            if (ret2 >= 0) {
+                while ((ret2 = avcodec_receive_frame(R.decCtx, R.decFrame)) >= 0) {
+                    stat_decFrames++;
+                    R.decFrame->pts = R.decFrame->best_effort_timestamp;
+                    if (av_buffersrc_add_frame_flags(R.buffersrcCtx, R.decFrame,
+                                                     AV_BUFFERSRC_FLAG_KEEP_REF) < 0)
+                        break;
+                    av_frame_unref(R.decFrame);
+
+                    while (av_buffersink_get_frame(R.buffersinkCtx, R.filtFrame) >= 0) {
+                        stat_filtFrames++;
+                        gifFrameCount++;
+                        R.filtFrame->pts = gifFrameCount - 1;
+                        if (avcodec_send_frame(R.gifEncCtx, R.filtFrame) >= 0) {
+                            while (avcodec_receive_packet(R.gifEncCtx, R.pkt) >= 0) {
+                                stat_encPkts++;
+                                av_packet_rescale_ts(R.pkt, R.gifEncCtx->time_base,
+                                                     R.outVideoStream->time_base);
+                                R.pkt->stream_index = R.outVideoStream->index;
+                                if (av_interleaved_write_frame(R.outFmtCtx, R.pkt) >= 0) {
+                                    stat_writtenPkts++;
+                                }
+                                av_packet_unref(R.pkt);
+                            }
+                        }
+                        av_frame_unref(R.filtFrame);
                     }
                 }
-                if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) ret = 0;
             }
-            if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) ret = 0;
-        }
-        if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) ret = 0;
-    }
-    if (ret != AVERROR_EOF && ret != 0) {
-        logErr(ret, "read_frame_loop");
-        return ret;
-    }
 
-    // flush 解码器
-    ret = avcodec_send_packet(R.decCtx, nullptr);
-    if (ret >= 0) {
-        while ((ret = avcodec_receive_frame(R.decCtx, R.decFrame)) >= 0) {
-            R.decFrame->pts = R.decFrame->best_effort_timestamp;
-            if (av_buffersrc_add_frame_flags(R.buffersrcCtx, R.decFrame,
-                                             AV_BUFFERSRC_FLAG_KEEP_REF) < 0)
-                break;
-            av_frame_unref(R.decFrame);
+            // flush 过滤器（通知 EOF 并把剩余帧取完）
+            av_buffersrc_add_frame_flags(R.buffersrcCtx, nullptr, 0);
             while (av_buffersink_get_frame(R.buffersinkCtx, R.filtFrame) >= 0) {
+                stat_filtFrames++;
                 gifFrameCount++;
                 R.filtFrame->pts = gifFrameCount - 1;
                 if (avcodec_send_frame(R.gifEncCtx, R.filtFrame) >= 0) {
-                    AVPacket outPkt;
-                    av_init_packet(&outPkt);
-                    while (avcodec_receive_packet(R.gifEncCtx, &outPkt) >= 0) {
-                        av_packet_rescale_ts(&outPkt, R.gifEncCtx->time_base,
+                    while (avcodec_receive_packet(R.gifEncCtx, R.pkt) >= 0) {
+                        stat_encPkts++;
+                        av_packet_rescale_ts(R.pkt, R.gifEncCtx->time_base,
                                              R.outVideoStream->time_base);
-                        outPkt.stream_index = R.outVideoStream->index;
-                        av_interleaved_write_frame(R.outFmtCtx, &outPkt);
-                        av_packet_unref(&outPkt);
+                        R.pkt->stream_index = R.outVideoStream->index;
+                        if (av_interleaved_write_frame(R.outFmtCtx, R.pkt) >= 0) {
+                            stat_writtenPkts++;
+                        }
+                        av_packet_unref(R.pkt);
                     }
                 }
                 av_frame_unref(R.filtFrame);
             }
+
+            // flush GIF 编码器
+            avcodec_send_frame(R.gifEncCtx, nullptr);
+            while (avcodec_receive_packet(R.gifEncCtx, R.pkt) >= 0) {
+                stat_encPkts++;
+                av_packet_rescale_ts(R.pkt, R.gifEncCtx->time_base, R.outVideoStream->time_base);
+                R.pkt->stream_index = R.outVideoStream->index;
+                if (av_interleaved_write_frame(R.outFmtCtx, R.pkt) >= 0) {
+                    stat_writtenPkts++;
+                }
+                av_packet_unref(R.pkt);
+            }
+
+            av_log(nullptr, AV_LOG_INFO,
+                   "videoToGif stats: readPkts=%lld videoPkts=%lld decFrames=%lld filtFrames=%lld encPkts=%lld writtenPkts=%lld",
+                   (long long) stat_readPkts, (long long) stat_videoPkts,
+                   (long long) stat_decFrames,
+                   (long long) stat_filtFrames, (long long) stat_encPkts,
+                   (long long) stat_writtenPkts);
+
+            CHECK(av_write_trailer(R.outFmtCtx), "write_trailer");
+            av_log(nullptr, AV_LOG_INFO, "GIF success");
         }
-    }
 
-    // flush GIF 编码器
-    avcodec_send_frame(R.gifEncCtx, nullptr);
-    while (avcodec_receive_packet(R.gifEncCtx, R.pkt) >= 0) {
-        av_packet_rescale_ts(R.pkt, R.gifEncCtx->time_base, R.outVideoStream->time_base);
-        R.pkt->stream_index = R.outVideoStream->index;
-        av_interleaved_write_frame(R.outFmtCtx, R.pkt);
-        av_packet_unref(R.pkt);
-    }
+        return 0;
+    };
 
-    ret = av_write_trailer(R.outFmtCtx);
+    int ret = run();
     if (ret < 0) {
-        logErr(ret, "write_trailer");
-        return ret;
+        av_log(nullptr, AV_LOG_ERROR, "videoToGif failed ret=%d (%s)", ret, ff_get_last_error());
     }
 
-    LOGI("GIF success frames=%lld", (long long) gifFrameCount);
-    return 0;
+    return ret;
 }
+
 
 extern "C"
 JNIEXPORT jint JNICALL
@@ -523,200 +587,193 @@ Java_com_example_videoapp_utils_FFmpeg_clip(
         jlong jDurationMs,
         jboolean jReEncode
 ) {
-    const char *inputPath = env->GetStringUTFChars(jInput, 0);
-    const char *outputPath = env->GetStringUTFChars(jOutput, 0);
-
     int ret = 0;
-    AVFormatContext *inFmtCtx = nullptr;
-    AVFormatContext *outFmtCtx = nullptr;
-    AVPacket *pkt = nullptr;
+#undef FAIL
+#undef CHECK
+#define FAIL(code, where) do { ret = (code); ff_store_last_error(ret, where); return ret; } while(0)
+#define CHECK(EXPR, where) do { if ((ret = (EXPR)) < 0) { ff_store_last_error(ret, where); return ret; } } while(0)
+
+    JStr inPath(env, jInput), outPath(env, jOutput);
+    const bool reEncode = (jReEncode == JNI_TRUE);
 
     int64_t startMs = (int64_t) jStartMs;
     int64_t durationMs = (int64_t) jDurationMs;
-    bool reEncode = (bool) jReEncode;
 
-    if (durationMs <= 0) {
-        ret = AVERROR(EINVAL);
-        return ret;
+    // 参数校验
+    if (startMs < 0) FAIL(AVERROR(EINVAL), "clip:startMs<0");
+    if (durationMs < 0) FAIL(AVERROR(EINVAL), "clip:durationMs<0");
+    if (durationMs == 0) {
+        av_log(nullptr, AV_LOG_WARNING, "clip: durationMs==0 -> default 2000ms (2s)");
+        durationMs = 2000; // 默认剪辑 2s
     }
+    // 入口日志（Android & FFmpeg）
+    __android_log_print(ANDROID_LOG_INFO, "FFmpegClip",
+                        "JNI clip() enter in=%s out=%s startMs=%lld durationMs=%lld reEncode=%d",
+                        inPath.cstr ? inPath.cstr : "(null)",
+                        outPath.cstr ? outPath.cstr : "(null)",
+                        (long long) startMs, (long long) durationMs, (int) reEncode);
+    av_log(nullptr, AV_LOG_INFO,
+           "clip begin in=%s out=%s startMs=%lld durationMs=%lld reEncode=%d",
+           inPath.cstr, outPath.cstr, (long long) startMs, (long long) durationMs, (int) reEncode);
 
-    // 1. 打开输入
-    if ((ret = avformat_open_input(&inFmtCtx, inputPath, nullptr, nullptr)) < 0) {
-        return ret;
-    }
-    if ((ret = avformat_find_stream_info(inFmtCtx, nullptr)) < 0) {
-        return ret;
-    }
+    auto run = [&]() -> int {
+        struct ClipRes {
+            AVFormatContext *inFmtCtx = nullptr;
+            AVFormatContext *outFmtCtx = nullptr;
 
-    // 2. 计算结束时间 (ms)
-    int64_t totalDurationMs = (inFmtCtx->duration > 0)
-                              ? inFmtCtx->duration / (AV_TIME_BASE / 1000)
-                              : -1;
-    if (totalDurationMs > 0 && startMs >= totalDurationMs) {
-        ret = AVERROR(EINVAL);
-        return ret;
-    }
-    int64_t endMs = startMs + durationMs;
-    if (totalDurationMs > 0 && endMs > totalDurationMs) {
-        endMs = totalDurationMs;
-    }
+            AVPacket *pkt = nullptr;
 
-    if (!reEncode) {
-        // 3. 创建输出上下文
-        if ((ret = avformat_alloc_output_context2(&outFmtCtx, nullptr, nullptr, outputPath)) < 0) {
-            goto end;
+            ~ClipRes() {
+                if (pkt) av_packet_free(&pkt);
+                if (outFmtCtx) {
+                    if (!(outFmtCtx->oformat->flags & AVFMT_NOFILE) && outFmtCtx->pb) {
+                        avio_closep(&outFmtCtx->pb);
+                    }
+                    avformat_free_context(outFmtCtx);
+                }
+                if (inFmtCtx) avformat_close_input(&inFmtCtx);
+            }
+        } R;
+
+        // 打开输入并读取信息
+        CHECK(avformat_open_input(&R.inFmtCtx, inPath.cstr, nullptr, nullptr), "clip:open_input");
+        CHECK(avformat_find_stream_info(R.inFmtCtx, nullptr), "clip:find_stream_info");
+        av_log(nullptr, AV_LOG_INFO, "clip: input nb_streams=%u duration(us)=%lld",
+               R.inFmtCtx->nb_streams, (long long) R.inFmtCtx->duration);
+        av_dump_format(R.inFmtCtx, 0, inPath.cstr, 0);
+
+        int64_t totalDurationMs = (R.inFmtCtx->duration > 0)
+                                  ? R.inFmtCtx->duration / (AV_TIME_BASE / 1000)
+                                  : -1;
+        if (totalDurationMs > 0 && startMs >= totalDurationMs)
+            FAIL(AVERROR(EINVAL), "clip:start>=total");
+        if (totalDurationMs > 0 && startMs + durationMs > totalDurationMs) {
+            av_log(nullptr, AV_LOG_WARNING,
+                   "clip: endMs(%lld) > total(%lld), truncating",
+                   (long long) (startMs + durationMs), (long long) totalDurationMs);
+            durationMs = totalDurationMs - startMs;
         }
 
-        // 4. 为每个输入流创建对应输出流（copy 参数）
-        int streamCount = inFmtCtx->nb_streams;
-        std::vector<int64_t> firstPts(streamCount, AV_NOPTS_VALUE);
-        std::vector<int64_t> firstDts(streamCount, AV_NOPTS_VALUE);
+        if (!reEncode) {
+            // 输出上下文
+            CHECK(avformat_alloc_output_context2(&R.outFmtCtx, nullptr, nullptr, outPath.cstr),
+                  "clip:alloc_output_ctx");
 
-        for (unsigned i = 0; i < inFmtCtx->nb_streams; ++i) {
-            AVStream *inStream = inFmtCtx->streams[i];
-            AVCodecParameters *inCodecPar = inStream->codecpar;
+            // 为每个输入流创建对应输出流（copy 参数）
+            int streamCount = (int) R.inFmtCtx->nb_streams;
+            std::vector<int64_t> firstPts(streamCount, AV_NOPTS_VALUE);
+            std::vector<int64_t> firstDts(streamCount, AV_NOPTS_VALUE);
 
-            AVStream *outStream = avformat_new_stream(outFmtCtx, nullptr);
-            if (!outStream) {
-                ret = AVERROR(ENOMEM);
-                goto end;
+            for (unsigned i = 0; i < R.inFmtCtx->nb_streams; ++i) {
+                AVStream *inStream = R.inFmtCtx->streams[i];
+                AVCodecParameters *inCodecPar = inStream->codecpar;
+                AVStream *outStream = avformat_new_stream(R.outFmtCtx, nullptr);
+                if (!outStream) FAIL(AVERROR(ENOMEM), "clip:new_stream");
+                CHECK(avcodec_parameters_copy(outStream->codecpar, inCodecPar), "clip:copy_par");
+                outStream->codecpar->codec_tag = 0; // 避免不兼容
+                // 关键：复制 time_base，���免时间基差异导致时长计算偏差
+                outStream->time_base = inStream->time_base;
             }
 
-            // 复制参数
-            if ((ret = avcodec_parameters_copy(outStream->codecpar, inCodecPar)) < 0) {
-                goto end;
+            // 打开输出 IO
+            if (!(R.outFmtCtx->oformat->flags & AVFMT_NOFILE))
+                CHECK(avio_open(&R.outFmtCtx->pb, outPath.cstr, AVIO_FLAG_WRITE), "clip:avio_open");
+
+            // 选择用于 seek 的流（尽量视频）
+            int videoStreamIndex = -1;
+            for (unsigned i = 0; i < R.inFmtCtx->nb_streams; ++i) {
+                if (R.inFmtCtx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+                    videoStreamIndex = (int) i;
+                    break;
+                }
             }
-            outStream->codecpar->codec_tag = 0; // 避免不兼容
+            int seekStream = (videoStreamIndex >= 0) ? videoStreamIndex : 0;
+            AVRational tb = R.inFmtCtx->streams[seekStream]->time_base;
+            av_log(nullptr, AV_LOG_INFO, "clip: seekStream=%d tb=%d/%d", seekStream, tb.num,
+                   tb.den);
+
+            int64_t endMs = startMs + durationMs;
+            int64_t seekTarget = av_rescale_q(startMs, AVRational{1, 1000}, tb);
+            int sret = av_seek_frame(R.inFmtCtx, seekStream, seekTarget, AVSEEK_FLAG_BACKWARD);
+            av_log(nullptr, AV_LOG_INFO, "clip: av_seek_frame to %lld ret=%d",
+                   (long long) seekTarget, sret);
+            if (sret < 0) {
+                av_log(nullptr, AV_LOG_WARNING, "clip: seek failed, fallback to start");
+                avformat_seek_file(R.inFmtCtx, seekStream, INT64_MIN, 0, INT64_MAX, 0);
+            }
+
+            // 写文件头
+            CHECK(avformat_write_header(R.outFmtCtx, nullptr), "clip:write_header");
+            av_dump_format(R.outFmtCtx, 0, outPath.cstr, 1);
+
+            // 主循环读取/写入
+            R.pkt = av_packet_alloc();
+            if (!R.pkt) FAIL(AVERROR(ENOMEM), "clip:alloc_pkt");
+
+            int64_t stat_read = 0, stat_written = 0;
+            while ((ret = av_read_frame(R.inFmtCtx, R.pkt)) >= 0) {
+                ++stat_read;
+                AVStream *inStream = R.inFmtCtx->streams[R.pkt->stream_index];
+                AVStream *outStream = R.outFmtCtx->streams[R.pkt->stream_index];
+                AVRational inTb = inStream->time_base;
+                int64_t curMs = (R.pkt->pts == AV_NOPTS_VALUE) ? -1
+                                                               : av_rescale_q(R.pkt->pts, inTb,
+                                                                              AVRational{1, 1000});
+
+                if (curMs >= 0 && curMs < startMs) {
+                    av_packet_unref(R.pkt);
+                    continue;
+                }
+                if (curMs >= 0 && curMs > endMs) {
+                    // 超过结束时间：主流则结束，其他流仅跳过，避���尾部卡帧
+                    av_packet_unref(R.pkt);
+                    if (R.pkt->stream_index == seekStream) break;
+                    else continue;
+                }
+
+                if (firstPts[R.pkt->stream_index] == AV_NOPTS_VALUE && R.pkt->pts != AV_NOPTS_VALUE)
+                    firstPts[R.pkt->stream_index] = R.pkt->pts;
+                if (firstDts[R.pkt->stream_index] == AV_NOPTS_VALUE && R.pkt->dts != AV_NOPTS_VALUE)
+                    firstDts[R.pkt->stream_index] = R.pkt->dts;
+
+                if (R.pkt->pts != AV_NOPTS_VALUE && firstPts[R.pkt->stream_index] != AV_NOPTS_VALUE)
+                    R.pkt->pts -= firstPts[R.pkt->stream_index];
+                if (R.pkt->dts != AV_NOPTS_VALUE && firstDts[R.pkt->stream_index] != AV_NOPTS_VALUE)
+                    R.pkt->dts -= firstDts[R.pkt->stream_index];
+
+                R.pkt->pts = (R.pkt->pts == AV_NOPTS_VALUE) ? AV_NOPTS_VALUE : av_rescale_q(
+                        R.pkt->pts, inTb, outStream->time_base);
+                R.pkt->dts = (R.pkt->dts == AV_NOPTS_VALUE) ? AV_NOPTS_VALUE : av_rescale_q(
+                        R.pkt->dts, inTb, outStream->time_base);
+                R.pkt->duration = av_rescale_q(R.pkt->duration, inTb, outStream->time_base);
+                R.pkt->pos = -1;
+                // 移除不安全的 dts=pts 修正，避免 B 帧重排被破坏
+
+                int wret = av_interleaved_write_frame(R.outFmtCtx, R.pkt);
+                av_packet_unref(R.pkt);
+                if (wret < 0) {
+                    ff_store_last_error(wret, "clip:write_frame");
+                    return wret;
+                }
+                ++stat_written;
+            }
+
+            if (ret == AVERROR_EOF) ret = 0;
+            av_log(nullptr, AV_LOG_INFO, "clip: loop end ret=%d read=%lld written=%lld",
+                   ret, (long long) stat_read, (long long) stat_written);
+            if (ret >= 0) CHECK(av_write_trailer(R.outFmtCtx), "clip:write_trailer");
+            av_log(nullptr, AV_LOG_INFO, "clip success written=%lld", (long long) stat_written);
+            return ret;
+        } else {
+            FAIL(AVERROR(ENOSYS), "clip:reencode_not_impl");
         }
+    };
 
-        // 5. 打开输出 IO
-        if (!(outFmtCtx->oformat->flags & AVFMT_NOFILE)) {
-            if ((ret = avio_open(&outFmtCtx->pb, outputPath, AVIO_FLAG_WRITE)) < 0) {
-                goto end;
-            }
-        }
-
-        // 6. 为快速裁剪 seek（关键帧）: 使用视频流或第一个可 seek 的流
-        int videoStreamIndex = -1;
-        for (unsigned i = 0; i < inFmtCtx->nb_streams; ++i) {
-            if (inFmtCtx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
-                videoStreamIndex = i;
-                break;
-            }
-        }
-
-        int seekStream = (videoStreamIndex >= 0) ? videoStreamIndex : 0;
-        AVRational tb = inFmtCtx->streams[seekStream]->time_base;
-        int64_t seekTarget = av_rescale_q(startMs, AVRational{1, 1000}, tb);
-
-        // NOTE: 使用 AVSEEK_FLAG_BACKWARD 以确保落在之前的关键帧
-        if ((ret = av_seek_frame(inFmtCtx, seekStream, seekTarget, AVSEEK_FLAG_BACKWARD)) < 0) {
-            // 失败可忽略继续读（但起点可能不准确）
-            av_log(nullptr, AV_LOG_WARNING, "Seek failed, continue without precise start.\n");
-            avformat_seek_file(inFmtCtx, seekStream, INT64_MIN, 0, INT64_MAX, 0);
-        }
-//        avcodec_flush_buffers(inFmtCtx->streams[seekStream]->codec);
-
-        // 7. 写文件头
-        if ((ret = avformat_write_header(outFmtCtx, nullptr)) < 0) {
-            goto end;
-        }
-
-        pkt = av_packet_alloc();
-        if (!pkt) {
-            ret = AVERROR(ENOMEM);
-            goto end;
-        }
-
-        // 8. 主循环读取
-        while ((ret = av_read_frame(inFmtCtx, pkt)) >= 0) {
-            AVStream *inStream = inFmtCtx->streams[pkt->stream_index];
-            AVStream *outStream = outFmtCtx->streams[pkt->stream_index];
-
-            AVRational inTb = inStream->time_base;
-
-            // 将当前 pkt pts 转为 ms 用于判断
-            int64_t curMs = (pkt->pts == AV_NOPTS_VALUE)
-                            ? -1
-                            : av_rescale_q(pkt->pts, inTb, AVRational{1, 1000});
-
-            // 丢弃起始前包
-            if (curMs >= 0 && curMs < startMs) {
-                av_packet_unref(pkt);
-                continue;
-            }
-            // 超过结束时间
-            if (curMs >= 0 && curMs > endMs) {
-                av_packet_unref(pkt);
-                break;
-            }
-
-            // 记录该流的初始 pts/dts 以归零
-            if (firstPts[pkt->stream_index] == AV_NOPTS_VALUE && pkt->pts != AV_NOPTS_VALUE) {
-                firstPts[pkt->stream_index] = pkt->pts;
-            }
-            if (firstDts[pkt->stream_index] == AV_NOPTS_VALUE && pkt->dts != AV_NOPTS_VALUE) {
-                firstDts[pkt->stream_index] = pkt->dts;
-            }
-
-            // 重写 PTS/DTS
-            if (pkt->pts != AV_NOPTS_VALUE && firstPts[pkt->stream_index] != AV_NOPTS_VALUE) {
-                pkt->pts -= firstPts[pkt->stream_index];
-            }
-            if (pkt->dts != AV_NOPTS_VALUE && firstDts[pkt->stream_index] != AV_NOPTS_VALUE) {
-                pkt->dts -= firstDts[pkt->stream_index];
-            }
-
-            // 再按输出流的时基进行缩放
-            pkt->pts = (pkt->pts == AV_NOPTS_VALUE)
-                       ? AV_NOPTS_VALUE
-                       : av_rescale_q(pkt->pts, inTb, outStream->time_base);
-            pkt->dts = (pkt->dts == AV_NOPTS_VALUE)
-                       ? AV_NOPTS_VALUE
-                       : av_rescale_q(pkt->dts, inTb, outStream->time_base);
-            pkt->duration = av_rescale_q(pkt->duration, inTb, outStream->time_base);
-            pkt->pos = -1;
-
-            if (pkt->dts != AV_NOPTS_VALUE && pkt->pts != AV_NOPTS_VALUE && pkt->dts > pkt->pts) {
-                // 避免错误顺序
-                pkt->dts = pkt->pts;
-            }
-
-            if ((ret = av_interleaved_write_frame(outFmtCtx, pkt)) < 0) {
-                av_packet_unref(pkt);
-                goto end;
-            }
-
-            av_packet_unref(pkt);
-        }
-
-        if (ret == AVERROR_EOF) {
-            ret = 0;
-        }
-        // 9. 写尾
-        if (ret >= 0) {
-            av_write_trailer(outFmtCtx);
-        }
+    int rc = run();
+    if (rc < 0) {
+        av_log(nullptr, AV_LOG_ERROR, "clip failed rc=%d (%s)", rc, ff_get_last_error());
     } else {
-        // TODO: reEncode = true 的情况（精确裁剪）
-        // 先给出返回，后面你需要我再补完整 re-encode 版本的话再说。
-        ret = AVERROR(ENOSYS); // 功能未实现
+        av_log(nullptr, AV_LOG_INFO, "clip done rc=%d", rc);
     }
-
-    end:
-    if (pkt) av_packet_free(&pkt);
-    if (outFmtCtx) {
-        if (!(outFmtCtx->oformat->flags & AVFMT_NOFILE) && outFmtCtx->pb) {
-            avio_closep(&outFmtCtx->pb);
-        }
-        avformat_free_context(outFmtCtx);
-    }
-    if (inFmtCtx) {
-        avformat_close_input(&inFmtCtx);
-    }
-
-    env->ReleaseStringUTFChars(jInput, inputPath);
-    env->ReleaseStringUTFChars(jOutput, outputPath);
-    return ret;
+    return rc;
 }
-

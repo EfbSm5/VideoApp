@@ -6,11 +6,11 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=gnu++11")
 # 路径：预编译 FFmpeg so 和头文件
 set(ffmpeg_lib_dir ${CMAKE_SOURCE_DIR}/../jniLibs/${ANDROID_ABI})
 set(ffmpeg_head_dir ${CMAKE_SOURCE_DIR}/include)
-#set(fftool_c_dir ${CMAKE_SOURCE_DIR}/fftools)
+#set(fftool_c_dir ${ffmpeg_head_dir}/fftools)
 
 include_directories(${ffmpeg_head_dir}
-#        ${fftool_c_dir}
-#        ${ffmpeg_head_dir}/fftools
+        #        ${fftool_c_dir}
+        #        ${ffmpeg_head_dir}/fftools
 )
 
 # 导入预编译 FFmpeg so
@@ -56,20 +56,6 @@ add_library(native-lib SHARED
 #        ${fftool_c_dir}/thread_queue.c
 #        ${fftool_c_dir}/objpool.c
 )
-#
-#set_source_files_properties(
-#        ${fftool_c_dir}/ffmpeg.c
-#        PROPERTIES COMPILE_FLAGS "-Dmain=ffmpeg_main"
-#)
-
-#add_library(ffmpeg
-#        SHARED
-#        fftools/cmdutils.c
-#        fftools/ffmpeg_entry.c
-#        fftools/ffmpeg_filter.c
-#        fftools/ffmpeg_hw.c
-#        fftools/ffmpeg_opt.c
-#)
 
 # 链接
 target_link_libraries(
@@ -83,10 +69,6 @@ target_link_libraries(
         avdevice
         ${log-lib}
 )
-#target_link_libraries(
-#        native-lib
-#        ffmpeg
-#        ${log-lib})
 
 
 
