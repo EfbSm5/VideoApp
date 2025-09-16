@@ -1,21 +1,4 @@
-//// Write C++ code here.
-////
-//// Do not forget to dynamically load the C++ library into your application.
-////
-//// For instance,
-////
-//// In MainActivity.java:
-////    static {
-////       System.loadLibrary("videoapp");
-////    }
-////
-//// Or, in MainActivity.kt:
-////    companion object {
-////      init {
-////         System.loadLibrary("videoapp")
-////      }
-////    }
-//
+
 #include <jni.h>
 #include <cstdio>
 #include <cstdarg>
@@ -44,72 +27,49 @@ extern "C" {
 
 
 extern "C"
-JNIEXPORT jstring JNICALL
-Java_com_example_videoapp_utils_FFmpeg_ffmpegVersion(JNIEnv *env, jobject /*thiz*/) {
+JNIEXPORT jstring
+Java_com_example_videoapp_utils_FFmpeg_ffmpegVersion(JNIEnv
+                                                     *env, jobject /*thiz*/) {
     unsigned ver = avformat_version();
     char buf[64];
-    std::snprintf(buf, sizeof(buf), "avformat_version=%u", ver);
-    return env->NewStringUTF(buf);
+    std::snprintf(buf,
+                  sizeof(buf), "avformat_version=%u", ver);
+    return env->
+            NewStringUTF(buf);
 }
 
-extern "C" {
-#include "libavcodec/avcodec.h"
-JNIEXPORT jstring JNICALL
-Java_com_example_videoapp_utils_FFmpeg_ffmpegConfig(JNIEnv *env, jobject thiz) {
+extern "C"
+JNIEXPORT jstring
+JNICALL
+Java_com_example_videoapp_utils_FFmpeg_ffmpegConfig(JNIEnv *env, jobject
+thiz) {
     return env->NewStringUTF(avcodec_configuration());
 }
-}
-
-//extern "C" JNIEXPORT void JNICALL
-//Java_com_example_videoapp_utils_FFmpeg_runffmpeg(JNIEnv *env, jobject thiz, jobjectArray commands) {
-//    if (commands == nullptr) return;
-//
-//    jsize argc = env->GetArrayLength(commands);
-//    if (argc == 0) return;
-//
-//    std::vector<const char *> rawPtrs;
-//    rawPtrs.reserve(argc);
-//    for (jsize i = 0; i < argc; ++i) {
-//        jstring jstr = (jstring) env->GetObjectArrayElement(commands, i);
-//        if (!jstr) {
-//            rawPtrs.push_back("");
-//            continue;
-//        }
-//        const char *utf = env->GetStringUTFChars(jstr, nullptr);
-//        rawPtrs.push_back(utf);
-//        env->DeleteLocalRef(jstr);
-//    }
-//    std::vector<char *> argv;
-//    argv.reserve(argc + 1);
-//    for (auto p: rawPtrs) {
-//        argv.push_back(const_cast<char *>(p));
-//    }
-//    argv.push_back(nullptr);
-//
-//    ffmpeg_exec((int) argc, argv.data());
-//}
 
 
-extern "C" JNIEXPORT jboolean JNICALL
+
+extern "C" JNIEXPORT jboolean
+
+JNICALL
 Java_com_example_videoapp_utils_FFmpeg_hasGifEncoder(JNIEnv *env, jobject /*thiz*/) {
     const AVCodec *codec = avcodec_find_encoder(AV_CODEC_ID_GIF);
     return codec ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C"
-JNIEXPORT jstring JNICALL
+JNIEXPORT jstring
+JNICALL
 Java_com_example_videoapp_utils_FFmpeg_getLastError(JNIEnv *env, jobject thiz) {
     return env->NewStringUTF(ff_get_last_error());
 }
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_example_videoapp_utils_FFmpeg_initLogger(JNIEnv *env, jobject thiz) {
+Java_com_example_videoapp_utils_FFmpeg_initLogger(JNIEnv *env, jobject thiz
+) {
     ff_init_logger();
 }
 
-static thread_local char t_lastError[512];
-static std::mutex g_errMutex;
 
 static void android_log_callback(void *ptr, int level, const char *fmt, va_list vl) {
     if (level > av_log_get_level()) return;
@@ -147,10 +107,8 @@ void ff_init_logger(int level) {
     av_log_set_callback(android_log_callback);
 }
 
-// 增加无参版本，便于 Java 直接调用
-void ff_init_logger() {
-    ff_init_logger(AV_LOG_INFO);
-}
+static thread_local char t_lastError[512];
+static std::mutex g_errMutex;
 
 void ff_store_last_error(int err, const char *where) {
     char errbuf[AV_ERROR_MAX_STRING_SIZE] = {0};
@@ -168,9 +126,6 @@ const char *ff_get_last_error() {
     std::lock_guard<std::mutex> lk(g_errMutex);
     return t_lastError[0] ? t_lastError : "";
 }
-
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  "GIF", __VA_ARGS__)
-#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "GIF", __VA_ARGS__)
 
 struct GifResources {
     AVFormatContext *inFmtCtx = nullptr;
@@ -221,6 +176,26 @@ struct JStr {
     }
 };
 
+struct StageInfo {
+    const char *name;
+    double weight;
+};
+
+static const StageInfo STAGES[] = {
+        {"open_input",         0.05},
+        {"find_stream_info",   0.05},
+        {"alloc_copy_streams", 0.08},
+        {"open_output_io",     0.02},
+        {"seek",               0.02},
+        {"write_header",       0.03},
+        {"process_packets",    0.70},
+        {"write_trailer",      0.05}
+};
+#undef FAIL
+#undef CHECK
+#define FAIL(code, where) do { ret = (code); ff_store_last_error(ret, where); return ret; } while(0)
+#define CHECK(EXPR, where) do { if ((ret = (EXPR)) < 0) { ff_store_last_error(ret, where); return ret; } } while(0)
+
 extern "C"
 JNIEXPORT jint JNICALL
 Java_com_example_videoapp_utils_FFmpeg_videoToGif(
@@ -232,7 +207,8 @@ Java_com_example_videoapp_utils_FFmpeg_videoToGif(
         jint jFps,
         jlong jStartMs,
         jlong jDurationMs,
-        jint /*qualityPreset*/) {
+        jint jQuality,
+        jobject jListener) {
 
     JStr inPath(env, jInput), outPath(env, jOutput);
     GifResources R;
@@ -249,24 +225,15 @@ Java_com_example_videoapp_utils_FFmpeg_videoToGif(
 
     auto run = [&]() -> int {
         int ret = 0;
-        // 宏：失败记录并返回
-#undef FAIL
-#undef CHECK
-#define FAIL(code, where) do { ret = (code); ff_store_last_error(ret, where); return ret; } while(0)
-#define CHECK(EXPR, where) do { if ((ret = (EXPR)) < 0) { ff_store_last_error(ret, where); return ret; } } while(0)
-
-        // 统计
         int64_t stat_readPkts = 0;
         int64_t stat_videoPkts = 0;
         int64_t stat_decFrames = 0;
         int64_t stat_filtFrames = 0;
         int64_t stat_encPkts = 0;
         int64_t stat_writtenPkts = 0;
-
         // 打开输入
         CHECK(avformat_open_input(&R.inFmtCtx, inPath.cstr, nullptr, nullptr), "open_input");
         CHECK(avformat_find_stream_info(R.inFmtCtx, nullptr), "find_stream_info");
-
         // 查找视频流
         {
             int vIndex = -1;
@@ -569,10 +536,15 @@ Java_com_example_videoapp_utils_FFmpeg_videoToGif(
 
     int ret = run();
     if (ret < 0) {
-        av_log(nullptr, AV_LOG_ERROR, "videoToGif failed ret=%d (%s)", ret, ff_get_last_error());
+        av_log(nullptr, AV_LOG_ERROR, "videoToGif failed ret=%d (%s)", ret,
+
+               ff_get_last_error()
+
+        );
     }
 
-    return ret;
+    return
+            ret;
 }
 
 
@@ -583,9 +555,12 @@ Java_com_example_videoapp_utils_FFmpeg_clip(
         jobject /*thiz*/,
         jstring jInput,
         jstring jOutput,
-        jlong jStartMs,
+        jlong
+        jStartMs,
         jlong jDurationMs,
-        jboolean jReEncode
+        jboolean
+        jReEncode,
+        jobject jListener
 ) {
     int ret = 0;
 #undef FAIL
@@ -599,19 +574,122 @@ Java_com_example_videoapp_utils_FFmpeg_clip(
     int64_t startMs = (int64_t) jStartMs;
     int64_t durationMs = (int64_t) jDurationMs;
 
-    // 参数校验
+//    jclass listenerCls = nullptr;
+//    jmethodID midOnProgress = nullptr;
+//    jmethodID midIsCancelled = nullptr;
+//    jmethodID midOnCompleted = nullptr;
+//    jmethodID midOnError = nullptr;
+//    if (jListener) {
+//        listenerCls = env->GetObjectClass(jListener);
+//        midOnProgress = env->GetMethodID(listenerCls, "onProgress", "(FILjava/lang/String;)V");
+//        if (env->
+//
+//                ExceptionCheck()
+//
+//                )
+//            env->
+//
+//                    ExceptionClear();
+//
+//        midIsCancelled = env->GetMethodID(listenerCls, "isCancelled", "()Z");
+//        if (env->
+//
+//                ExceptionCheck()
+//
+//                )
+//            env->
+//
+//                    ExceptionClear();
+//
+//        midOnCompleted = env->GetMethodID(listenerCls, "onCompleted", "(I)V");
+//        if (env->
+//
+//                ExceptionCheck()
+//
+//                )
+//            env->
+//
+//                    ExceptionClear();
+//
+//        midOnError = env->GetMethodID(listenerCls, "onError", "(ILjava/lang/String;)V");
+//        if (env->
+//
+//                ExceptionCheck()
+//
+//                )
+//            env->
+//
+//                    ExceptionClear();
+//
+//    }
+//    static const int STAGE_COUNT = (int) (sizeof(STAGES) / sizeof(STAGES[0]));
+//
+//    double prefix[STAGE_COUNT + 1];
+//    prefix[0] = 0.0;
+//    for (
+//            int i = 0;
+//            i < STAGE_COUNT;
+//            i++) {
+//        prefix[i + 1] = prefix[i] + STAGES[i].
+//                weight;
+//    }
+//
+//    auto callProgress = [&](int stageIndex, double intra) {
+//        if (!jListener || !midOnProgress) return;
+//        if (stageIndex < 0) stageIndex = 0;
+//        if (stageIndex >= STAGE_COUNT) stageIndex = STAGE_COUNT - 1;
+//        if (intra < 0.0) intra = 0.0;
+//        if (intra > 1.0) intra = 1.0;
+//        double base = prefix[stageIndex];
+//        double w = STAGES[stageIndex].weight;
+//        double prog = base + w * intra;
+//        if (prog > 0.999999 && stageIndex == STAGE_COUNT - 1 && intra >= 1.0) {
+//            prog = 0.999999; // 留一点给最终 DONE=1.0
+//        }
+//        jstring jName = env->NewStringUTF(STAGES[stageIndex].name);
+//        env->CallVoidMethod(jListener, midOnProgress, (jfloat) prog, (jint) stageIndex, jName);
+//        if (env->ExceptionCheck()) env->ExceptionClear();
+//        env->DeleteLocalRef(jName);
+//    };
+//
+//    auto callFinal = [&](int code, bool success) {
+//        if (jListener) {
+//            if (success && midOnProgress) {
+//                jstring jName = env->NewStringUTF("done");
+//                env->CallVoidMethod(jListener, midOnProgress, (jfloat) 1.0f,
+//                                    (jint) STAGE_COUNT, jName);
+//                if (env->ExceptionCheck()) env->ExceptionClear();
+//                env->DeleteLocalRef(jName);
+//            }
+//            if (code == 0 && midOnCompleted) {
+//                env->CallVoidMethod(jListener, midOnCompleted, (jint) 0);
+//                if (env->ExceptionCheck()) env->ExceptionClear();
+//            } else if (code != 0 && midOnError) {
+//                jstring msg = env->NewStringUTF(ff_get_last_error());
+//                env->CallVoidMethod(jListener, midOnError, (jint) code, msg);
+//                if (env->ExceptionCheck()) env->ExceptionClear();
+//                env->DeleteLocalRef(msg);
+//            }
+//        }
+//    };
+//
+//    auto isCancelled = [&]() -> bool {
+//        if (!jListener || !midIsCancelled) return false;
+//        jboolean c = env->CallBooleanMethod(jListener, midIsCancelled);
+//        if (env->ExceptionCheck()) {
+//            env->ExceptionClear();
+//            return false;
+//        }
+//        return c == JNI_TRUE;
+//    };
+
+// 参数校验
     if (startMs < 0) FAIL(AVERROR(EINVAL), "clip:startMs<0");
     if (durationMs < 0) FAIL(AVERROR(EINVAL), "clip:durationMs<0");
     if (durationMs == 0) {
         av_log(nullptr, AV_LOG_WARNING, "clip: durationMs==0 -> default 2000ms (2s)");
         durationMs = 2000; // 默认剪辑 2s
     }
-    // 入口日志（Android & FFmpeg）
-    __android_log_print(ANDROID_LOG_INFO, "FFmpegClip",
-                        "JNI clip() enter in=%s out=%s startMs=%lld durationMs=%lld reEncode=%d",
-                        inPath.cstr ? inPath.cstr : "(null)",
-                        outPath.cstr ? outPath.cstr : "(null)",
-                        (long long) startMs, (long long) durationMs, (int) reEncode);
     av_log(nullptr, AV_LOG_INFO,
            "clip begin in=%s out=%s startMs=%lld durationMs=%lld reEncode=%d",
            inPath.cstr, outPath.cstr, (long long) startMs, (long long) durationMs, (int) reEncode);
@@ -771,9 +849,14 @@ Java_com_example_videoapp_utils_FFmpeg_clip(
 
     int rc = run();
     if (rc < 0) {
-        av_log(nullptr, AV_LOG_ERROR, "clip failed rc=%d (%s)", rc, ff_get_last_error());
+        av_log(nullptr, AV_LOG_ERROR, "clip failed rc=%d (%s)", rc,
+
+               ff_get_last_error()
+
+        );
     } else {
         av_log(nullptr, AV_LOG_INFO, "clip done rc=%d", rc);
     }
-    return rc;
+    return
+            rc;
 }

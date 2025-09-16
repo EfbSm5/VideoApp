@@ -30,7 +30,8 @@ object FFmpeg {
         fps: Int,
         startMs: Long,
         durationMs: Long,   // 0 表示直到结尾
-        qualityPreset: Int  // 预留可映射不同过滤链
+        qualityPreset: Int,  // 预留可映射不同过滤链
+        listener: FFmpegStepListener
     ): Int   // 0 成功，非 0 失败
 
     private external fun clip(
@@ -38,7 +39,8 @@ object FFmpeg {
         outputPath: String,
         startMs: Long,
         durationMs: Long,
-        reEncode: Boolean  // false=快速裁剪; true=精确(后期再实现)
+        reEncode: Boolean, // false=快速裁剪; true=精确(后期再实现)
+        listener: FFmpegStepListener
     ): Int
 
     private external fun ffmpegConfig(): String
@@ -103,7 +105,8 @@ object FFmpeg {
         startMs: Long,
         durationMs: Long,
         dispatcherIO: CoroutineDispatcher = Dispatchers.IO,
-        dispatcherCPU: CoroutineDispatcher = Dispatchers.Default
+        dispatcherCPU: CoroutineDispatcher = Dispatchers.Default,
+                listener : FFmpegStepListener
     ): VideoResult = withContext(dispatcherIO) {
         if (null == input) return@withContext VideoResult.Failure("no-data")
         try {
@@ -122,6 +125,7 @@ object FFmpeg {
                     maxWidth = maxWidth,
                     fps = fps,
                     qualityPreset = 0,
+                    listener = listener
                 )
             }
             if (resultCode == 0) {
@@ -142,7 +146,8 @@ object FFmpeg {
         durationMs: Long,
         reEncode: Boolean = false,
         dispatcherIO: CoroutineDispatcher = Dispatchers.IO,
-        dispatcherCPU: CoroutineDispatcher = Dispatchers.Default
+        dispatcherCPU: CoroutineDispatcher = Dispatchers.Default,
+        listener: FFmpegStepListener
     ): VideoResult = withContext(dispatcherIO) {
         if (null == inputUri) return@withContext VideoResult.Failure("no-data")
         try {
@@ -158,7 +163,8 @@ object FFmpeg {
                     outputPath = outputPath,
                     startMs = startMs,
                     durationMs = durationMs,
-                    reEncode = reEncode
+                    reEncode = reEncode,
+                    listener = listener
                 )
             }
             if (resultCode == 0) {
@@ -174,11 +180,12 @@ object FFmpeg {
     }
 }
 
-interface FFmpegProgressListener {
-    fun onProgress(currentMs: Long, totalMs: Long, percent: Float)
+interface FFmpegStepListener {
 
-    fun onCompleted(code: Int)
-    fun onError(code: Int, msg: String?)
+    fun onProgress(progress: Float, stage: Int, stageName: String?)
     val isCancelled: Boolean
-}
+        get() = false
 
+    fun onCompleted(code: Int) {}
+    fun onError(code: Int, msg: String?) {}
+}

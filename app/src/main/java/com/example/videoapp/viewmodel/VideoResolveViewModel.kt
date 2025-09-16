@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.videoapp.ui.pages.Screen
 import com.example.videoapp.utils.FFmpeg
+import com.example.videoapp.utils.FFmpegStepListener
 import com.example.videoapp.utils.showMsg
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -33,7 +34,17 @@ class VideoResolveViewModel : ViewModel() {
         viewModelScope.launch {
             _showLoading.value = true
             val result = FFmpeg.toGif(
-                input = _selectedUri.value, startMs = 0, durationMs = 2000, fps = 10, maxWidth = 480
+                input = _selectedUri.value, startMs = 0, durationMs = 2000, fps = 10, maxWidth = 480, listener = object :
+                    FFmpegStepListener{
+                    override fun onProgress(
+                        progress: Float,
+                        stage: Int,
+                        stageName: String?
+                    ) {
+
+                    }
+
+                }
             )
             _showLoading.value = false
             when (result) {
@@ -47,7 +58,17 @@ class VideoResolveViewModel : ViewModel() {
         viewModelScope.launch {
             _showLoading.value = true
             val result = FFmpeg.clipVideo(
-                inputUri = selectedUri.value, startMs = 0, durationMs = 0
+                inputUri = selectedUri.value, startMs = 0, durationMs = 0, listener =object :
+                    FFmpegStepListener{
+                    override fun onProgress(
+                        progress: Float,
+                        stage: Int,
+                        stageName: String?
+                    ) {
+
+                    }
+
+                }
             )
             _showLoading.value = false
             when (result) {
